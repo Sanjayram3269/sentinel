@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<routes>
+
+    <!-- Vehicle type definitions must come first -->
+    <vType id="emergency"
+           vClass="emergency"
+           accel="3.0"
+           decel="5.0"
+           maxSpeed="13.9"/>
+
+    <vType id="passenger"
+           vClass="passenger"
+           accel="2.6"
+           decel="4.5"
+           maxSpeed="13.9"/>
+
+    <!-- Emergency vehicle route -->
+    <route id="emergency_route"
+           edges="north_in south_out"/>
+
+    <!-- Competing east -> west traffic -->
+    <route id="east_west_route"
+           edges="east_in west_out"/>
+
+    <!-- Competing west -> east traffic -->
+    <route id="west_east_route"
+           edges="west_in east_out"/>
+
+
+    <!-- Competing traffic -->
+    <flow id="east_west_flow"
+          type="passenger"
+          route="east_west_route"
+          begin="0"
+          end="120"
+          period="8"
+          departLane="0"
+          departSpeed="max"/>
+
+    <flow id="west_east_flow"
+          type="passenger"
+          route="west_east_route"
+          begin="0"
+          end="120"
+          period="10"
+          departLane="0"
+          departSpeed="max"/>
+
+</routes>

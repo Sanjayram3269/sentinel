@@ -36,7 +36,11 @@ from app.services.simulation.fake_adapter import FIXTURE_PATH, FakeSimulationAda
 from app.services.simulation.runner import SimulationRunner
 from app.services.simulation.service import build_comparison_metrics
 from app.services.simulation.scenario_builder import ScenarioBuilder
-from app.services.simulation.sumo_adapter import SumoTraCIAdapter
+from app.services.simulation.sumo_adapter import (
+    SumoTraCIAdapter,
+    edge_link_indices,
+    verify_preemption_phase_grants_green,
+)
 
 SIGNAL_UUID = UUID(int=11)
 ROUTE_UUID = UUID(int=12)
@@ -365,6 +369,25 @@ def test_missing_signal_phase_is_rejected_without_writing_a_phase() -> None:
     assert adapter._closed is True
 
 
+def test_a_rejected_signal_is_decided_once_and_not_re_proposed_every_step() -> None:
+    """A signal the metadata forbids must not be re-requested on each step."""
+
+    forbidden = signal_definition(
+        safe_transitions={"R": ["Y"], "G": ["R"], "Y": ["R"]}
+    )
+    adapter = FakeSimulationAdapter()
+    result = SimulationRunner().execute(
+        scenario(SimulationMode.CLEARPATH, signals=[forbidden], maximum_seconds=30),
+        adapter,
+    )
+
+    assert result.actions, "the forbidden transition must still be reported once"
+    assert all(a.decision is SafetyDecision.REJECTED for a in result.actions)
+    assert {a.reason_code for a in result.actions} == {"UNSAFE_PHASE_TRANSITION"}
+    assert len(result.actions) == 1
+    assert adapter.signal_commands == []
+
+
 def test_missing_signal_write_closes_the_adapter_and_preserves_the_error() -> None:
     class FailingSignalAdapter(FakeSimulationAdapter):
         def set_signal_state(self, signal_id: str, phase: str) -> None:
@@ -600,3 +623,109 @@ def test_metric_overrides_are_only_a_test_hook() -> None:
     adapter.start(scenario())
     assert adapter.get_metrics(scenario().emergency_vehicle_id) == injected
     assert FakeSimulationAdapter().metric_overrides is None
+
+
+# -- live phase verification --------------------------------------------
+
+# The verified clearpath_demo J1 program. Controlled links 0-2 are the north_in
+# approaches, so only phase 2 clears the emergency corridor.
+DEMO_PHASE_STATES = ["rrrGggGGg", "rrryyyyyy", "GGGrrrrrr", "yyyrrrrrr"]
+DEMO_LINK_IN_LANES = [
+    "north_in_0", "north_in_0", "north_in_0",
+    "east_in_0", "east_in_0", "east_in_0",
+    "west_in_0", "west_in_0", "west_in_0",
+]
+
+
+def demo_signal(**updates: object) -> SignalDefinition:
+    base: dict[str, object] = {
+        "traffic_signal_id": SIGNAL_UUID,
+        "signal_id": "J1",
+        "edge_id": "north_in",
+        "valid_phases": ["0", "1", "2", "3"],
+        "preemption_phase": "2",
+        "release_phase": "0",
+        "safe_transitions": {"0": ["2"], "1": ["0"], "2": ["0"], "3": ["0"]},
+        "maximum_duration_seconds": 20,
+        "initial_phase": "0",
+    }
+    return SignalDefinition(**{**base, **updates})
+
+
+def test_edge_link_indices_selects_only_the_mapped_approach() -> None:
+    assert edge_link_indices(DEMO_LINK_IN_LANES, "north_in") == [0, 1, 2]
+    assert edge_link_indices(DEMO_LINK_IN_LANES, "east_in") == [3, 4, 5]
+    assert edge_link_indices(DEMO_LINK_IN_LANES, "west_in") == [6, 7, 8]
+    assert edge_link_indices(DEMO_LINK_IN_LANES, "south_out") == []
+
+
+def test_verified_green_preemption_phase_is_accepted() -> None:
+    verify_preemption_phase_grants_green(
+        demo_signal(), DEMO_PHASE_STATES, DEMO_LINK_IN_LANES
+    )
+
+
+@pytest.mark.parametrize(
+    ("phase", "indication"),
+    [
+        ("1", "r"),  # rrryyyyyy -> north_in red
+        ("3", "y"),  # yyyrrrrrr -> north_in yellow
+    ],
+)
+def test_a_phase_that_does_not_clear_the_corridor_is_refused(phase, indication) -> None:
+    """A yellow-only or red phase is not a successful pre-emption.
+
+    Phases 1 and 3 are both valid, non-release phases, so the metadata itself is
+    accepted and it is the live phase program that refuses them.
+    """
+    signal = demo_signal(
+        preemption_phase=phase,
+        safe_transitions={"0": [phase], phase: ["0"], "2": ["0"]},
+    )
+    with pytest.raises(SimulationConfigurationError) as error:
+        verify_preemption_phase_grants_green(
+            signal, DEMO_PHASE_STATES, DEMO_LINK_IN_LANES
+        )
+    assert error.value.code == "SIMULATION_CONFIGURATION_INVALID"
+    assert f"shows {indication} for edge 'north_in'" in error.value.args[0]
+    assert "must show green" in error.value.args[0]
+
+
+def test_preemption_phase_outside_the_declared_program_is_refused() -> None:
+    """Metadata may declare a phase the live SUMO program does not contain."""
+    signal = demo_signal(
+        valid_phases=["0", "1", "2", "3", "7"],
+        preemption_phase="7",
+        safe_transitions={"0": ["7"], "7": ["0"], "2": ["0"]},
+    )
+    with pytest.raises(SimulationConfigurationError) as error:
+        verify_preemption_phase_grants_green(
+            signal, DEMO_PHASE_STATES, DEMO_LINK_IN_LANES
+        )
+    assert error.value.code == "SIMULATION_CONFIGURATION_INVALID"
+    assert "has no phase 7 in the SUMO program" in error.value.args[0]
+
+
+def test_preemption_phase_equal_to_release_phase_is_still_invalid_metadata() -> None:
+    """The schema invariant is untouched by live phase verification."""
+    with pytest.raises(ValueError, match="must differ"):
+        demo_signal(preemption_phase="0", release_phase="0")
+
+
+def test_signal_controlling_no_mapped_approach_is_refused() -> None:
+    with pytest.raises(SimulationConfigurationError) as error:
+        verify_preemption_phase_grants_green(
+            demo_signal(edge_id="south_out"),
+            DEMO_PHASE_STATES,
+            DEMO_LINK_IN_LANES,
+        )
+    assert "controls no approach" in error.value.args[0]
+
+
+def test_green_phase_for_another_approach_is_not_accepted_for_this_corridor() -> None:
+    """Phase 2 is green for north_in but red for west_in."""
+    signal = demo_signal(edge_id="west_in")
+    with pytest.raises(SimulationConfigurationError):
+        verify_preemption_phase_grants_green(
+            signal, DEMO_PHASE_STATES, DEMO_LINK_IN_LANES
+        )

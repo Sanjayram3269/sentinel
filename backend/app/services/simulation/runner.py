@@ -112,13 +112,12 @@ class SimulationRunner:
         active: dict[str, ActivePreemption],
         actions: list[SignalActionResult],
     ) -> None:
-        # A corridor signal is requested at most once per run. Re-arming is
+        # A corridor signal is decided at most once per run. Re-arming is
         # deliberately not attempted so pre-emption can never become an
-        # open-ended override of a simulated signal.
+        # open-ended override of a simulated signal, and so a signal this
+        # signal's metadata forbids is not re-proposed on every step.
         requested = set(active) | {
-            result.action.signal_id
-            for result in actions
-            if result.decision is SafetyDecision.APPROVED
+            result.action.signal_id for result in actions
         }
         for action in self.strategy.determine_actions(
             scenario, state, current_time, requested

@@ -1,0 +1,44 @@
+{
+  "_comment": [
+    "Verified traffic-signal metadata for the clearpath_demo SUMO network.",
+    "Verified against SUMO 1.27.1 using TraCI: the J1 program has four phases and",
+    "controlled links 0-2 are the north_in approaches. Phase 2 ('GGGrrrrrr') is the",
+    "only phase that shows green for north_in, so it is the pre-emption phase.",
+    "SumoTraCIAdapter re-verifies preemption_phase against the live phase program on",
+    "every start and refuses any phase that does not clear the corridor, so editing",
+    "this file cannot make a red or yellow phase pass.",
+    "traffic_signal_id is a placeholder UUID satisfying the schema; a deployment",
+    "stores this metadata on its TrafficSignal row."
+  ],
+  "signals": [
+    {
+      "traffic_signal_id": "00000000-0000-0000-0000-000000000001",
+      "signal_id": "J1",
+      "edge_id": "north_in",
+      "valid_phases": [
+        "0",
+        "1",
+        "2",
+        "3"
+      ],
+      "initial_phase": "0",
+      "preemption_phase": "2",
+      "release_phase": "0",
+      "safe_transitions": {
+        "0": [
+          "2"
+        ],
+        "1": [
+          "0"
+        ],
+        "2": [
+          "0"
+        ],
+        "3": [
+          "0"
+        ]
+      },
+      "maximum_duration_seconds": 20
+    }
+  ]
+}

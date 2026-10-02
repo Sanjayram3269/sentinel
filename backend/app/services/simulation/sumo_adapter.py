@@ -11,15 +11,17 @@ installation (``SUMO_BINARY``/``SUMO_CONFIG_PATH``/``SUMO_NETWORK_ID``) and the
 
 import logging
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
 from statistics import mean
 from typing import Any
 
 from app.config import Settings, get_settings
-from app.schemas.simulation import SimulationMetrics, SimulationScenario
+from app.schemas.simulation import SignalDefinition, SimulationMetrics, SimulationScenario
 from app.services.simulation.adapter import (
     EmergencyVehicleState,
     SimulationAdapterError,
+    SimulationConfigurationError,
     SimulationConnectionError,
     SimulationSignalError,
     SimulationUnavailableError,
@@ -28,6 +30,82 @@ from app.services.simulation.adapter import (
 
 logger = logging.getLogger(__name__)
 STOPPED_SPEED_THRESHOLD = 0.1
+# Signal indications that let traffic proceed. A pre-emption phase that shows
+# anything else (notably yellow or red) holds the emergency vehicle and is not a
+# successful pre-emption, so it must be refused rather than simulated.
+GREEN_INDICATIONS = frozenset({"G", "g"})
+
+
+def _link_in_lanes(controlled_links: Any) -> list[str]:
+    """Return the incoming lane of each controlled link.
+
+    TraCI reports one entry per controlled link, each holding one or more link
+    tuples of ``(in_lane, out_lane, via_lane)``. Every tuple for the same
+    position shares an incoming lane, so the first is representative.
+    """
+    lanes: list[str] = []
+    for entry in controlled_links:
+        tuples = entry if isinstance(entry, tuple) and entry and isinstance(entry[0], tuple) else (entry,)
+        first = tuples[0]
+        lanes.append(str(first[0] if isinstance(first, (tuple, list)) else first))
+    return lanes
+
+
+def edge_link_indices(link_in_lanes: Sequence[str], edge_id: str) -> list[int]:
+    """Return the controlled-link positions belonging to ``edge_id``.
+
+    SUMO names an approach lane ``<edge_id>_<lane index>``, so the controlled
+    links for an edge are the lanes whose name is that edge plus a lane index.
+    """
+    return [
+        index
+        for index, lane in enumerate(link_in_lanes)
+        if lane.rsplit("_", 1)[0] == edge_id
+    ]
+
+
+def verify_preemption_phase_grants_green(
+    signal: SignalDefinition,
+    phase_states: Sequence[str],
+    link_in_lanes: Sequence[str],
+) -> None:
+    """Refuse a configured pre-emption phase that does not clear the corridor.
+
+    The safety guard checks that a transition is permitted by the configured
+    metadata; it cannot know what the phase actually displays. This reads the
+    live phase program, so metadata claiming a pre-emption phase is verified
+    against the network rather than trusted. A yellow-only or red phase is
+    rejected instead of being reported as a successful pre-emption.
+    """
+    try:
+        index = int(signal.preemption_phase)
+    except (TypeError, ValueError) as error:
+        raise SimulationConfigurationError(
+            f"Signal {signal.signal_id!r} has a non-numeric pre-emption phase"
+        ) from error
+    if not 0 <= index < len(phase_states):
+        raise SimulationConfigurationError(
+            f"Signal {signal.signal_id!r} has no phase {index} in the SUMO program"
+        )
+    indices = edge_link_indices(link_in_lanes, signal.edge_id)
+    if not indices:
+        raise SimulationConfigurationError(
+            f"Signal {signal.signal_id!r} controls no approach to edge "
+            f"{signal.edge_id!r} in the SUMO network"
+        )
+    state = phase_states[index]
+    if max(indices) >= len(state):
+        raise SimulationConfigurationError(
+            f"Signal {signal.signal_id!r} phase {index} does not describe edge "
+            f"{signal.edge_id!r}"
+        )
+    indications = {state[position] for position in indices}
+    if not indications <= GREEN_INDICATIONS:
+        raise SimulationConfigurationError(
+            f"Signal {signal.signal_id!r} pre-emption phase {index} shows "
+            f"{''.join(sorted(indications))} for edge {signal.edge_id!r}; a "
+            "pre-emption phase must show green"
+        )
 
 
 class SumoTraCIAdapter:
@@ -158,6 +236,8 @@ class SumoTraCIAdapter:
             raise SimulationSignalError(
                 "A configured traffic signal is missing from the SUMO network"
             )
+        for signal in scenario.traffic_signals:
+            self._verify_preemption_phase(connection, signal)
 
         emergency_route_id = f"sentinel-route-{scenario.correlation_id}"
         if emergency_route_id not in set(connection.route.getIDList()):
@@ -183,6 +263,31 @@ class SumoTraCIAdapter:
                     typeID=flow.vehicle_type_id,
                     depart=str(depart),
                 )
+
+    @staticmethod
+    def _verify_preemption_phase(connection: Any, signal: SignalDefinition) -> None:
+        """Check configured pre-emption metadata against the live phase program."""
+        try:
+            logics = connection.trafficlight.getAllProgramLogics(signal.signal_id)
+            if not logics:
+                raise SimulationSignalError(
+                    "A configured traffic signal exposes no SUMO phase program"
+                )
+            active = str(connection.trafficlight.getProgram(signal.signal_id))
+            logic = next(
+                (item for item in logics if str(item.programID) == active), logics[0]
+            )
+            phase_states = [phase.state for phase in logic.phases]
+            link_in_lanes = _link_in_lanes(
+                connection.trafficlight.getControlledLinks(signal.signal_id)
+            )
+        except SimulationAdapterError:
+            raise
+        except Exception as error:
+            raise SimulationSignalError(
+                "Cannot read the SUMO phase program for a configured signal"
+            ) from error
+        verify_preemption_phase_grants_green(signal, phase_states, link_in_lanes)
 
     def close(self) -> None:
         """Release the TraCI connection and any SUMO process it started."""

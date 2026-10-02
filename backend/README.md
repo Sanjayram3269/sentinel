@@ -246,6 +246,40 @@ teammate-supplied SUMO network; TraCI must be available from that SUMO
 installation. Missing SUMO configuration or executable is reported as a
 persisted FAILED simulation. SUMO is optional for the standard test suite.
 
+`preemption_phase` is verified against the live SUMO phase program on every run,
+not just trusted from metadata. A phase that does not show green for the mapped
+corridor edge is refused with `SIMULATION_CONFIGURATION_INVALID`, so a yellow-only
+or red phase can never be recorded as a successful pre-emption.
+
+A verified demo network is committed at
+[`clearpath_demo/`](simulation/scenarios/clearpath_demo/) with its signal
+metadata in [`signals.json`](simulation/scenarios/clearpath_demo/signals.json).
+It was verified against SUMO 1.27.1. Junction `J1` runs a four-phase program in
+which controlled links 0-2 are the `north_in` approaches, so **phase 2
+(`GGGrrrrrr`) is the only phase showing green for the emergency corridor**; it
+is the `preemption_phase` used by the committed metadata. Phases 1 and 3 show
+red and yellow respectively and are refused.
+
+The route file deliberately does not pre-declare an emergency vehicle. The
+adapter injects the scenario's vehicle, and a second pre-declared ambulance would
+queue behind it on the single-lane `north_in` edge and corrupt the measurement.
+
+Measured on this network (seed 42, SUMO 1.27.1, identical scenario and seed for
+both modes):
+
+| metric | BASELINE | CLEARPATH |
+| --- | --- | --- |
+| `emergency_vehicle_travel_time_seconds` | 56.0 | 19.0 |
+| `stopped_time_seconds` | 33.0 | 1.0 |
+| `number_of_stops` | 1 | 0 |
+| `average_speed_meters_per_second` | 3.346940300613747 | 10.375568807531252 |
+| `route_completed` | true | true |
+
+These are recorded here as the result of one verification run, not as an
+expected value: no metric or improvement percentage is hard-coded anywhere in
+the code or tests, and a CLEARPATH run slower than its baseline is a valid
+result that would still pass.
+
 `FakeSimulationAdapter` runs the bundled
 [`development_fixture.json`](simulation/scenarios/development_fixture.json),
 which is labeled `DEVELOPMENT / TEST NETWORK ONLY` and is synthetic edge/phase
@@ -262,7 +296,8 @@ installation.
 Baseline never calls CLEARPATH. CLEARPATH uses a separate deterministic strategy;
 every proposed action passes `ClearPathSafetyGuard`, which validates corridor,
 phase, configured safe transition/release, and bounded duration. A corridor
-signal is requested at most once per run and is never re-armed. Approved
+signal is *decided* at most once per run and is never re-armed, so a phase the
+metadata forbids is not re-proposed on every simulation step. Approved
 pre-emption is released when the vehicle passes the signal, when the duration
 ends, or at teardown, so a run can never end with a signal still pre-empted.
 Comparison uses the same scenario, traffic configuration, and seed for both
@@ -279,6 +314,18 @@ Optional SUMO setup example (run SUMO with a teammate-provided `.sumocfg`):
 $env:SUMO_BINARY = "sumo"
 $env:SUMO_CONFIG_PATH = "D:\\traffic-data\\scenario.sumocfg"
 $env:SUMO_NETWORK_ID = "team-network-v1"
+```
+
+Or run the committed demo network straight from a clean clone:
+
+```powershell
+$env:SUMO_BINARY = "sumo"
+$env:SUMO_CONFIG_PATH = "$PWD/simulation/scenarios/clearpath_demo/demo.sumocfg"
+$env:SUMO_NETWORK_ID = "clearpath-demo-v1"
+$env:SENTINEL_SUMO_SMOKE_EDGES = "north_in,south_out"
+$env:SENTINEL_SUMO_SMOKE_HORIZON = "120"
+$env:SENTINEL_SUMO_SMOKE = "1"
+pytest tests/integration/test_sumo_adapter_smoke.py
 ```
 
 Run simulation coverage with `pytest tests/integration/test_simulation_api.py`;
@@ -310,6 +357,26 @@ database-backed API tests are in `tests/integration` and are skipped unless
 `TEST_DATABASE_URL` points to a dedicated disposable PostGIS database. For
 example, set it in the shell before running pytest; the integration tests apply
 the Alembic migration to that database. Do not point it at production data.
+
+The real-SUMO suite in `tests/integration/test_sumo_adapter_smoke.py` is opt-in
+and skipped unless `SENTINEL_SUMO_SMOKE=1` is set alongside a SUMO installation.
+Against the committed demo network it needs only:
+
+```powershell
+$env:SUMO_BINARY = "sumo"
+$env:SUMO_CONFIG_PATH = "$PWD/simulation/scenarios/clearpath_demo/demo.sumocfg"
+$env:SUMO_NETWORK_ID = "clearpath-demo-v1"
+$env:SENTINEL_SUMO_SMOKE_EDGES = "north_in,south_out"
+$env:SENTINEL_SUMO_SMOKE_HORIZON = "120"
+$env:SENTINEL_SUMO_SMOKE = "1"
+pytest tests/integration/test_sumo_adapter_smoke.py
+```
+
+Signal metadata is read from the committed
+`simulation/scenarios/clearpath_demo/signals.json`, so nothing has to be typed by
+hand. Without a working SUMO the file reports a skip; it never fabricates a
+result, and an unavailable, malformed, or rejected configuration fails loudly
+rather than passing with no signals.
 
 ## Scope
 

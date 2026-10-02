@@ -298,3 +298,86 @@ pytest tests/integration/test_sumo_adapter_smoke.py
 
 Without a working SUMO installation this file reports a skip. It is not evidence
 of a passing SUMO run, and no result in this repository may be described as one.
+
+## Verified demo network
+
+`simulation/scenarios/clearpath_demo/` is a small verified SUMO network used to
+prove this pipeline end to end against a real simulator. It is a genuine SUMO
+install target, not a mock.
+
+Corridor: `north_in` → junction `J1` → `south_out`, plus competing
+`east_in`/`west_in` demand.
+
+`J1` runs a four-phase static program read from the live network via TraCI:
+
+| phase index | signal state | `north_in` approach |
+| ----------- | ------------ | ------------------- |
+| 0           | `rrrGggGGg`  | red                 |
+| 1           | `rrryyyyyy`  | red                 |
+| 2           | `GGGrrrrrr`  | **green**           |
+| 3           | `yyyrrrrrr`  | yellow              |
+
+Controlled links 0–2 are the `north_in` approaches, so **phase 2 is the
+north-green phase** and is the correct `preemption_phase` for this corridor. The
+index is not a label: it was read from `getAllProgramLogics` on a running SUMO.
+
+The route file defines the `emergency`/`passenger` vehicle types and the
+background flows. It deliberately does **not** pre-declare an emergency vehicle:
+`SumoTraCIAdapter` injects the scenario's vehicle, and a second pre-declared
+ambulance would queue behind it on the single-lane `north_in` edge and corrupt
+the measurement.
+
+Signal metadata for this network is committed as
+`simulation/scenarios/clearpath_demo/signals.json`, so the demo runs from a
+clean clone without retyping it:
+
+```json
+{
+  "traffic_signal_id": "<uuid>",
+  "signal_id": "J1",
+  "edge_id": "north_in",
+  "valid_phases": ["0", "1", "2", "3"],
+  "initial_phase": "0",
+  "preemption_phase": "2",
+  "release_phase": "0",
+  "safe_transitions": {"0": ["2"], "1": ["0"], "2": ["0"], "3": ["0"]},
+  "maximum_duration_seconds": 20
+}
+```
+
+### Pre-emption phases must actually clear the corridor
+
+`preemption_phase` is **verified against the live SUMO phase program** on every
+`start()`, not merely trusted from metadata. `SumoTraCIAdapter` reads the
+signal's controlled links and phase states and refuses the run with
+`SIMULATION_CONFIGURATION_INVALID` when the configured phase does not show green
+for the mapped corridor edge.
+
+The safety guard alone is not sufficient: it checks that a transition is
+*permitted by metadata* and cannot know what a phase actually displays. Without
+this check a yellow-only phase could be recorded as a successful pre-emption
+while the emergency vehicle never actually moves.
+
+On this network phase 3 (`yyyrrrrrr`) shows yellow for `north_in` and phase 1
+(`rrryyyyyy`) shows red, so both are refused. Phase 2 is green and is accepted.
+A phase that is green for a *different* approach is also refused: phase 2 is
+green for `north_in` but red for `west_in`.
+
+Run the verified network through the real path:
+
+```bash
+SENTINEL_SUMO_SMOKE=1 \
+SUMO_BINARY=/path/to/sumo \
+SUMO_CONFIG_PATH=$PWD/simulation/scenarios/clearpath_demo/demo.sumocfg \
+SUMO_NETWORK_ID=clearpath-demo-v1 \
+SENTINEL_SUMO_SMOKE_EDGES=north_in,south_out \
+SENTINEL_SUMO_SMOKE_HORIZON=120 \
+pytest tests/integration/test_sumo_adapter_smoke.py
+```
+
+`SENTINEL_SUMO_SMOKE_SIGNALS` is optional for this network; when omitted the
+committed `signals.json` is used. Set it explicitly to test another network.
+
+Metrics are whatever SUMO measured. A CLEARPATH run that is slower than its
+baseline is a valid result: the comparison is derived from the two runs, and no
+expected metric value is asserted anywhere in the code or the tests.

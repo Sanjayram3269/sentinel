@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<edges>
+    <!-- Emergency vehicle approaches from north -->
+    <edge id="north_in" from="north" to="J1" numLanes="1" speed="13.9"/>
+
+    <!-- Emergency vehicle exits toward south -->
+    <edge id="south_out" from="J1" to="south" numLanes="1" speed="13.9"/>
+
+    <!-- Competing east-west traffic -->
+    <edge id="west_in" from="west" to="J1" numLanes="1" speed="13.9"/>
+    <edge id="east_out" from="J1" to="east" numLanes="1" speed="13.9"/>
+
+    <edge id="east_in" from="east" to="J1" numLanes="1" speed="13.9"/>
+    <edge id="west_out" from="J1" to="west" numLanes="1" speed="13.9"/>
+</edges>
