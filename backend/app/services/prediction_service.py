@@ -141,6 +141,65 @@ class PredictionService:
         predictions = list((await db.scalars(statement)).all())
         return predictions[:limit], len(predictions) > limit
 
+    async def latest_by_type(
+        self, db: AsyncSession, mission_id: UUID
+    ) -> dict[PredictionKind, PredictionRead]:
+        """Return the latest persisted prediction for each supported type."""
+        exists = await db.scalar(select(Mission.id).where(Mission.id == mission_id))
+        if exists is None:
+            raise HTTPException(status_code=404, detail="Mission not found")
+        statement = (
+            select(Prediction)
+            .where(Prediction.mission_id == mission_id)
+            .order_by(
+                Prediction.observed_at.desc(),
+                Prediction.created_at.desc(),
+                Prediction.id.desc(),
+            )
+            .limit(100)
+        )
+        predictions = (await db.scalars(statement)).all()
+        latest: dict[PredictionKind, PredictionRead] = {}
+        for prediction in predictions:
+            try:
+                prediction_type = PredictionKind(prediction.prediction_type.value)
+            except ValueError:
+                continue
+            if prediction_type not in latest:
+                latest[prediction_type] = prediction_read(prediction)
+        return latest
+
+    async def latest_for_route(
+        self, db: AsyncSession, mission_id: UUID, route_id: UUID
+    ) -> dict[PredictionKind, PredictionRead]:
+        """Return latest predictions explicitly scoped to one persisted route."""
+        exists = await db.scalar(select(Mission.id).where(Mission.id == mission_id))
+        if exists is None:
+            raise HTTPException(status_code=404, detail="Mission not found")
+        statement = (
+            select(Prediction)
+            .where(
+                Prediction.mission_id == mission_id,
+                Prediction.route_id == route_id,
+            )
+            .order_by(
+                Prediction.observed_at.desc(),
+                Prediction.created_at.desc(),
+                Prediction.id.desc(),
+            )
+            .limit(100)
+        )
+        predictions = (await db.scalars(statement)).all()
+        latest: dict[PredictionKind, PredictionRead] = {}
+        for prediction in predictions:
+            try:
+                prediction_type = PredictionKind(prediction.prediction_type.value)
+            except ValueError:
+                continue
+            if prediction_type not in latest:
+                latest[prediction_type] = prediction_read(prediction)
+        return latest
+
     async def get(
         self, db: AsyncSession, mission_id: UUID, prediction_id: UUID
     ) -> Prediction:

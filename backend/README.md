@@ -142,6 +142,82 @@ the Task 3 event service and Redis publisher. A publish failure returns a
 controlled error; the prediction remains stored. Prediction is kept separate
 from route selection, optimization, safety validation, approval, and action.
 
+## Routing And Resilience
+
+Task 5 adds explicit routing candidate evaluation and route monitoring:
+
+- `POST /api/v1/missions/{mission_id}/routes/candidates` scores caller-supplied
+    candidate `LINESTRING` geometry and persists a planning cycle
+- `GET /api/v1/missions/{mission_id}/routes` lists at most 200 persisted routes;
+    optional `vehicle_id`, `role`, and `status` filters are supported
+- `GET /api/v1/missions/{mission_id}/routes/{route_id}` retrieves one route
+- `GET /api/v1/missions/{mission_id}/routes/resilience` evaluates the latest
+    cycle, or accepts `vehicle_id` and `planning_cycle_id`
+- `POST /api/v1/missions/{mission_id}/routes/{route_id}/activate` activates a
+    viable route and deactivates any previously active route for that vehicle
+
+`RoutingProvider` is the replaceable provider contract. The current
+`baseline_development_provider` only normalizes route proposals included in the
+request; it creates no road network and makes no external routing calls.
+Candidate records link to existing `Route` records for their stored PostGIS
+geometry and operational lifecycle. `RouteCandidate` stores planning cycle,
+origin/destination, provider, role, and evaluation metrics.
+
+The `baseline_routing_score_v1` formula uses configurable weights, defaulting
+to ETA 0.25, distance 0.15, risk 0.15, predicted failure 0.20, congestion
+0.10, and hazard exposure 0.15. ETA and distance are min-max normalized across
+the supplied candidates; equal values map to neutral 0.5. Available metrics
+only are included and their weights are renormalized. `score_coverage` reports
+the fraction of configured weight represented by available inputs. Scores are
+lower-is-better and are prototype parameters, not scientifically validated
+operational weights. Candidate duration is the provider's ETA input. Task 4's
+mission-wide predictions are not applied to newly generated candidate routes.
+Candidate/provider-supplied values are used when present; otherwise failure,
+congestion, and hazard inputs remain unavailable and reduce score coverage.
+Existing Task 4 ETA predictions are not reused for new geometries because they
+describe different routes. Route monitoring can use a Task 4 prediction only
+when its persisted `route_id` exactly matches the monitored route.
+
+Viability defaults are `ROUTE_FAILURE_THRESHOLD=0.70`,
+`ROUTE_HAZARD_THRESHOLD=0.80`, and
+`ROUTE_DEVIATION_THRESHOLD_METERS=100`. A route above a failure or hazard
+threshold or explicitly reported unreachable by a provider is excluded;
+failure, aborted, and degraded routes are not activatable. Weights are
+configured with `ROUTE_WEIGHT_ETA`, `ROUTE_WEIGHT_DISTANCE`,
+`ROUTE_WEIGHT_RISK`, `ROUTE_WEIGHT_FAILURE`, `ROUTE_WEIGHT_CONGESTION`, and
+`ROUTE_WEIGHT_HAZARD`. These are development defaults, not validated emergency
+dispatch thresholds.
+
+Primary is the lowest-scoring viable candidate. Backup and contingency must
+meet `ROUTE_MIN_DIVERSITY` (default 0.30) relative to already selected routes.
+`FAILED`, `ABORTED`, and `DEGRADED` routes are excluded from resilience roles;
+degraded routes remain available in route history for diagnostics but cannot
+be activated.
+When provider road-segment IDs exist, diversity uses shared ID count; otherwise
+it uses exact shared geometry segments and geodesic segment lengths from the
+candidate vertices. This is only a geometry approximation, not proof of
+road-network independence. The resilience score combines role coverage
+(0.2/0.2/0.1), mean pairwise diversity (0.3), and inverse available failure
+exposure (0.2); unknown failure exposure receives a neutral 0.5 contribution.
+All three roles and score >= 0.75 are HIGH; a viable primary and backup are at
+least MEDIUM; primary-only is LOW; no viable primary is NO_RESILIENCE.
+
+`RouteMonitorService.evaluate_route_health(mission_id, route_id)` is explicit;
+there is no background monitor. It checks latest telemetry against the route
+using PostGIS geography distances in meters, stored/Task 4 failure probability,
+and active hazard exposure. New failure/deviation/backup degradation emits the
+matching Task 3 event and `REPLAN_TRIGGERED` with
+`GENERATE_NEW_CANDIDATES`; it does not run a replanner. Candidate geometry and
+route scoring are prototypes and are **not certified for real emergency
+dispatch**.
+
+Migration `0004_route_resilience` refuses downgrade while Task 5 candidate data
+exists, rather than silently dropping it. When safe to downgrade, null legacy
+candidate risks are restored to the old non-null contract using conservative
+`1.0`; new route statuses are mapped to legacy `BLOCKED`/`REJECTED` values.
+PostgreSQL enum labels cannot be removed directly, so the Task 5 labels remain
+unused after downgrade.
+
 ## Run tests
 
 From the `backend` directory, run the database-free suite with:
@@ -160,7 +236,8 @@ the Alembic migration to that database. Do not point it at production data.
 
 ## Scope
 
-The backend currently covers domain persistence, event/telemetry streams, and
-deterministic prediction baselines. Trained ML models, routing, optimization,
-simulation execution, signal control, CLEARPATH, and workflow orchestration
-remain out of scope.
+The backend currently covers domain persistence, event/telemetry streams,
+deterministic prediction baselines, and prototype route resilience. Trained ML
+models, SUMO/TraCI, traffic signal control, CLEARPATH, resource allocation,
+human approval, autonomous actions, and workflow orchestration remain out of
+scope.

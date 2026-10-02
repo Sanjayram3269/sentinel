@@ -40,11 +40,22 @@ class VehicleStatus(str, Enum):
 
 
 class RouteStatus(str, Enum):
+    CANDIDATE = "CANDIDATE"
     ACTIVE = "ACTIVE"
+    DEGRADED = "DEGRADED"
+    FAILED = "FAILED"
+    COMPLETED = "COMPLETED"
+    ABORTED = "ABORTED"
     BACKUP = "BACKUP"
     CONTINGENCY = "CONTINGENCY"
     BLOCKED = "BLOCKED"
     REJECTED = "REJECTED"
+
+
+class ResilienceRole(str, Enum):
+    PRIMARY = "PRIMARY"
+    BACKUP = "BACKUP"
+    CONTINGENCY = "CONTINGENCY"
 
 
 class ApprovalStatus(str, Enum):
