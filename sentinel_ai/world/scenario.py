@@ -5,7 +5,8 @@ import time
 
 def generate_scenario(scenario_id: str, seed: int, scenario_type: str = "mixed") -> WorldState:
     """Generates a reproducible scenario with fixed seed."""
-    seed_val = hash(f"{seed}_{scenario_type}") % (2**32)
+    import hashlib
+    seed_val = int(hashlib.md5(f"{seed}_{scenario_type}".encode()).hexdigest(), 16) % (2**32)
     random.seed(seed_val)
     
     # 4 Hospitals

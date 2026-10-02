@@ -4,7 +4,7 @@ import copy
 import time
 
 from sentinel_ai.contracts import (
-    WorldState, OptimizeMissionRequest, CounterfactualChange,
+    WorldState, OptimizeMissionRequest, OptimizeMissionResponse, CounterfactualChange,
     SimulateCounterfactualResponse, HazardState
 )
 from sentinel_ai.optimization.optimizer import optimize_mission

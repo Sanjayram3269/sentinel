@@ -29,22 +29,32 @@ def _get_G(G):
 
 def predict_eta(req: PredictEtaRequest, *, G: Any = None) -> PredictEtaResponse:
     p10, p50, p90, baseline, src, conf = do_predict_eta(_get_G(G), req.route, req.depart_time_utc, req.world_state)
+    reasons = []
+    if "missing or invalid" in src:
+        reasons.append(src)
+        src = "baseline_fallback"
     return PredictEtaResponse(
         source=src,
         confidence=conf,
         eta_p10_min=p10,
         eta_p50_min=p50,
         eta_p90_min=p90,
-        baseline_eta_min=baseline
+        baseline_eta_min=baseline,
+        reasons=reasons
     )
 
 def predict_route_risk(req: PredictRouteRiskRequest, *, G: Any = None) -> PredictRouteRiskResponse:
     fails, prob, src, conf = do_predict_risk(_get_G(G), req.route, req.depart_time_utc, req.world_state)
+    reasons = []
+    if "missing or invalid" in src:
+        reasons.append(src)
+        src = "baseline_fallback"
     return PredictRouteRiskResponse(
         source=src,
         confidence=conf,
         route_fails=fails,
-        failure_probability=prob
+        failure_probability=prob,
+        reasons=reasons
     )
 
 def generate_and_score_routes(req: GenerateRoutesRequest, *, G: Any = None) -> GenerateRoutesResponse:

@@ -15,8 +15,8 @@ def load_models(model_dir: str = None):
     global _MODELS
     if model_dir is None:
         model_dir = os.environ.get("SENTINEL_MODEL_DIR")
-    if not model_dir:
-        _MODELS = None
+    if not model_dir or not os.path.isabs(model_dir):
+        _MODELS = "baseline_fallback"
         return
         
     model_path = os.path.join(model_dir, "sentinel_models.pkl")
@@ -24,14 +24,14 @@ def load_models(model_dir: str = None):
         with open(model_path, "rb") as f:
             _MODELS = pickle.load(f)
     else:
-        _MODELS = None
+        _MODELS = "baseline_fallback"
 
 def predict_eta(
     G: nx.DiGraph,
     route: List[str],
     depart_time_utc: float,
     world_state: WorldState,
-    model_dir: str = "models"
+    model_dir: str = None
 ) -> Tuple[float, float, float, float, str, float]:
     if _MODELS is None:
         load_models(model_dir)
@@ -39,8 +39,8 @@ def predict_eta(
     features = compute_route_features(G, route, depart_time_utc, world_state)
     baseline_eta = baseline_current_speed_eta(G, route, features)
     
-    if _MODELS is None:
-        return baseline_eta, baseline_eta, baseline_eta, baseline_eta, "baseline_fallback", 0.0
+    if _MODELS == "baseline_fallback" or _MODELS is None:
+        return baseline_eta, baseline_eta, baseline_eta, baseline_eta, "baseline_fallback: missing or invalid SENTINEL_MODEL_DIR", 0.0
         
     try:
         ranges = _MODELS.get("feature_ranges", {})
@@ -84,17 +84,17 @@ def predict_risk(
     route: List[str],
     depart_time_utc: float,
     world_state: WorldState,
-    model_dir: str = "models"
+    model_dir: str = None
 ) -> Tuple[bool, float, str, float]:
     if _MODELS is None:
         load_models(model_dir)
         
     features = compute_route_features(G, route, depart_time_utc, world_state)
     
-    if _MODELS is None:
+    if _MODELS == "baseline_fallback" or _MODELS is None:
         fails = features.get("closed_edge_flag", 0.0) > 0.5
         prob = 1.0 if fails else 0.0
-        return fails, prob, "baseline_fallback", 0.0
+        return fails, prob, "baseline_fallback: missing or invalid SENTINEL_MODEL_DIR", 0.0
         
     try:
         ranges = _MODELS.get("feature_ranges", {})

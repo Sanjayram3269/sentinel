@@ -42,7 +42,8 @@ def run_demo():
     for r in routes_res.routes[:3]:
         print(f"  Route {r.route_id} | Role: {r.role} | Score: {r.score:.2f} | P50 ETA: {r.eta_p50_min:.1f} min | Risk: {r.risk_probability*100:.1f}%")
         print(f"    Reason: {r.role_reason}")
-    print("  -> (d) EXPLANATION for high primary risk: The 'mixed' scenario generated a hazard right on the shortest path, leading to 99.9% predicted risk and a 0% hazard safety score (maximum exposure).")
+    if routes_res.routes[0].risk_probability > 0.9:
+        print("  [WARNING] ML Risk model predicts >90 percent failure on primary route. (Model limitation: overestimates risk on hazard proximity).")
 
     print("\\n[Step 3 & 5] Prediction & Resilience Computation...")
     res_req = ComputeResilienceRequest(
@@ -68,7 +69,8 @@ def run_demo():
         print(f"  Hospital {h.hospital_id} | {status} | Rank: {h.rank} | ETA (Incident->Hospital): {eta_str}")
         if not h.suitable:
             print(f"    Reasons: {h.unsuitable_reasons}")
-    print("  -> (c) EXPLANATION for hospital ETA: The ETA is computed from the incident node to the hospital node. It happens to be a similar distance/time as the unit-to-incident leg in this synthetic city.")
+        elif h.predicted_eta_min and h.predicted_eta_min > 50.0:
+            print("  [WARNING] Hospital ETA is >50 min on small grid. (Model limitation: XGBoost OOD overestimation on long routes).")
             
     print("\\n[Step 7] Full Mission Optimizer (CP-SAT)...")
     opt_req = OptimizeMissionRequest(
@@ -86,7 +88,6 @@ def run_demo():
             print(f"  - Unit {a.unit_id} (Ambulance) -> Incident ETA: {u_eta:.1f} min, Hospital ETA: {a.expected_eta_min - u_eta:.1f} min (Total: {a.expected_eta_min:.1f} min)")
         else:
             print(f"  - Unit {a.unit_id} -> Incident ETA: {a.expected_eta_min:.1f} min")
-    print("  -> (a) EXPLANATION for U1 ETA discrepancy: The optimizer step adds the Incident->Hospital ETA to the unit's total time, while the route step only showed Unit->Incident.")
         
     print("\\n[Step 8] What-If Scenario: Road Closure...")
     change = CounterfactualChange(
@@ -100,7 +101,8 @@ def run_demo():
     )
     cf_res = simulate_counterfactual(cf_req)
     print(f"  Delta ETA: {cf_res.delta_eta_min:+.1f} min")
-    print("  -> (b) EXPLANATION for ETA reduction: The ML ETA predictor (XGBoost) has noise and isn't monotonically increasing with distance. Rerouting changed features, leading to a slightly lower predicted ETA.")
+    if cf_res.delta_eta_min < 0:
+        print("  [WARNING] What-if closure reduced predicted ETA. (Model limitation: XGBoost is non-monotonic and noisy).")
     
     print("\\n[Step 9 & 10] Operator Approval & Execution...")
     print("  (Auto-approved) Executing baseline vs SENTINEL plan in Simulator...")
@@ -115,7 +117,9 @@ def run_demo():
     
     if comp_S: print(f"  SENTINEL Mission Time:   {eta_S:.1f} min")
     else: print("  SENTINEL Mission Time:   FAILED (inf)")
-    print("  -> (e) EXPLANATION for 46.6 min predicted vs 4.6 min actual: The XGBoost ETA model severely overestimated travel time due to scaling artifacts in the synthetic training data. Baseline B executed the same physical path in 4.6 simulated minutes.")
+    
+    if comp_S and comp_B and eta_S > eta_B * 2:
+        print("  [WARNING] XGBoost ETA > 2x Baseline actual. (Model limitation: scaling artifacts in synthetic training data).")
 
 if __name__ == "__main__":
     run_demo()

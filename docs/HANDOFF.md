@@ -5,19 +5,21 @@ Welcome to the AI/Optimization module of SENTINEL (Geoagentic Framework to Suppo
 ## 1. Installation
 
 This module is designed to run in a standalone Python environment. 
+**Tested and Supported on Python 3.12**. 
+*(Note: Python 3.14 requires building `pydantic-core` from source due to PyO3 compatibility limits and is not officially supported).*
 
 ```bash
 # Create and activate a clean virtual environment
-python3 -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
 
-# Install the exact frozen dependencies
+# Install dependencies (no workaround env vars needed for 3.12)
 pip install -r requirements-ai.txt
 ```
 
 ## 2. Environment Variables
 
-- `SENTINEL_MODEL_DIR`: Specifies the directory containing the pickled ML models (`sentinel_models.pkl`). If omitted, it gracefully falls back to `"models"`.
+- `SENTINEL_MODEL_DIR`: Absolute path to the directory containing `sentinel_models.pkl`. If missing, invalid, or non-absolute, the system safely triggers a `"baseline_fallback"` source in predictions with the reason `"missing or invalid SENTINEL_MODEL_DIR"`. It never falls back to relative paths like `models/`.
 - `OMP_NUM_THREADS`: Must be set to `"1"` for stable performance with XGBoost inside the simulator/optimizer loop.
 
 ## 3. The Public Facade (sentinel_ai/api.py)
@@ -148,7 +150,10 @@ print("New ETA:", res.new_plan.expected_mission_time_min)
 
 ## 4. Known Limitations
 
-1. **Prediction Fallback**: The predictive models (`use_prediction=True`) systematically over-estimate synthetic grid ETAs due to scalar mismatches between the synthetic network distances and realistic speed bounds. Currently, `use_prediction` defaults to `False`, allowing the system to use the Baseline B exact-simulator shortest path routing loop while retaining full access to mission-level CP-SAT unit assignment.
-2. **SUMO Data Unimplemented**: `load_dataset("sumo")` currently raises a `NotImplementedError`. The data generation loop is entirely reliant on the synthetic graph environment.
-3. **CP-SAT Mission Overhead**: `optimize_mission` evaluates the entire route chain (`Unit -> Incident -> Hospital`), while Baseline B strictly evaluates `Unit -> Incident`. This structural mismatch causes Sentinel's reported mission times to appear artificially higher during direct closed-loop comparisons.
-4. **Infinite Loops in Simulator**: If an ambulance is fully surrounded by impassable hazards/closures in a generated synthetic city, CP-SAT and the simulator routing fallback may struggle to resolve the route. The progress guard (every 5 stalled iterations) forces a fallback mechanism to prevent thread hanging.
+1. **Prediction Fallback**: The predictive models (`use_prediction=True`) systematically over-estimate synthetic grid ETAs due to scalar mismatches between the synthetic network distances and realistic speed bounds (e.g. 95.5 min on a 10x10 grid). ML is used for ETA intervals only.
+2. **Default Routing**: `use_prediction` defaults to `False`, allowing the system to use the Baseline B exact-simulator shortest path routing loop while retaining full access to mission-level CP-SAT unit assignment.
+3. **ML Controller Evaluation**: The ML controller lost to Baseline B on hazard and mixed scenarios in the seeds 250-299 evaluation.
+4. **Risk & What-If**: Risk models overestimate failure (e.g., 100%) near hazards, and XGBoost is noisy/non-monotonic in what-if scenarios. These are unverified on this synthetic setup.
+5. **SUMO Data Unimplemented**: `load_dataset("sumo")` currently raises a `NotImplementedError`. No SUMO validation has been performed.
+6. **CP-SAT Mission Overhead**: `optimize_mission` evaluates the entire route chain (`Unit -> Incident -> Hospital`), while Baseline B strictly evaluates `Unit -> Incident`. This structural mismatch causes Sentinel's reported mission times to appear artificially higher during direct closed-loop comparisons.
+7. **Infinite Loops in Simulator**: If an ambulance is fully surrounded by impassable hazards/closures, the progress guard (every 5 stalled iterations) forces a fallback mechanism to prevent thread hanging.

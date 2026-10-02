@@ -1,0 +1,32 @@
+--- SENTINEL: Geoagentic Framework to Support Emergency Movement ---
+Loading models (if any)...
+\n[Step 1] Initializing Synthetic City + Units + Hospitals + Incident (Seed 42)...
+Incident INC_DEMO_1 at N_4_5. Requires: ['ambulance', 'police']
+Ambulance U1 at N_0_0.
+\n[Step 2 & 4] Generating Routes (Diverse k-shortest) + Roles + Scoring...
+  Route R_0 | Role: primary | Score: 0.70 | P50 ETA: 1.7 min | Risk: 0.0%
+    Reason: Best score
+\n[Step 3 & 5] Prediction & Resilience Computation...
+  Resilience Score: 57.5/100
+  - Route redundancy is 40% based on available diverse paths.
+  - No viable backup route identified.
+  - Primary route success probability is 100%.
+  - Hazard safety score is 100% (0% means highly exposed).
+\n[Step 6] Hospital Destination Ranking...
+  Hospital H2 | Suitable | Rank: 1 | ETA (Incident->Hospital): 2.2 min
+  Hospital H1 | Suitable | Rank: 2 | ETA (Incident->Hospital): 2.5 min
+  Hospital H3 | Unsuitable | Rank: None | ETA (Incident->Hospital): N/A
+    Reasons: ["Required capability 'trauma' unavailable."]
+  Hospital H4 | Unsuitable | Rank: None | ETA (Incident->Hospital): N/A
+    Reasons: ["Required capability 'trauma' unavailable."]
+\n[Step 7] Full Mission Optimizer (CP-SAT)...
+  Expected Mission Time: 3.9 min
+  - Unit U1 (Ambulance) -> Incident ETA: 1.7 min, Hospital ETA: 2.2 min (Total: 3.9 min)
+  - Unit U3 -> Incident ETA: 1.8 min
+\n[Step 8] What-If Scenario: Road Closure...
+  Delta ETA: +0.6 min
+\n[Step 9 & 10] Operator Approval & Execution...
+  (Auto-approved) Executing baseline vs SENTINEL plan in Simulator...
+\n[Step 11 & 12] Baseline vs SENTINEL Result (Real Execution)
+  Baseline B Mission Time: 2.0 min
+  SENTINEL Mission Time:   2.0 min
