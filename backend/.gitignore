@@ -5,3 +5,11 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+simulation/output/
+simulation/runs/
+*.tripinfo.xml
+*.fcd.xml
+*.emission.xml
+*.netstate.xml
+*.summary.xml
+*.queue.xml

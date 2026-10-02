@@ -218,6 +218,74 @@ candidate risks are restored to the old non-null contract using conservative
 PostgreSQL enum labels cannot be removed directly, so the Task 5 labels remain
 unused after downgrade.
 
+## SUMO Digital Twin And CLEARPATH
+
+Task 6 simulation is explicitly **digital-twin-only**. CLEARPATH signal actions
+are applied only through a simulation adapter; this backend does not control
+real traffic infrastructure.
+
+The mission-scoped endpoints are:
+
+- `POST /api/v1/missions/{mission_id}/simulations/baseline`
+- `POST /api/v1/missions/{mission_id}/simulations/clearpath`
+- `POST /api/v1/missions/{mission_id}/simulations/compare`
+- `GET /api/v1/missions/{mission_id}/simulations`
+- `GET /api/v1/missions/{mission_id}/simulations/{simulation_id}`
+
+The request must provide a network identifier, an explicit ordered route-to-edge
+mapping, vehicle/active route IDs, a deterministic seed, and bounded simulation
+duration. Geographic route geometry is not converted into road topology. Signal
+UUIDs must refer to enabled `TrafficSignal` records whose metadata explicitly
+maps `sumo_signal_id`, `edge_id`, valid phases, safe transitions, pre-emption
+phase, release phase, and maximum duration.
+
+`SimulationAdapter` is the synchronous boundary. `SumoTraCIAdapter` loads
+TraCI only when configured and runs inside a worker thread, never in API route
+code. Configure `SUMO_BINARY`, `SUMO_CONFIG_PATH`, and `SUMO_NETWORK_ID` for a
+teammate-supplied SUMO network; TraCI must be available from that SUMO
+installation. Missing SUMO configuration or executable is reported as a
+persisted FAILED simulation. SUMO is optional for the standard test suite.
+
+`FakeSimulationAdapter` runs the bundled
+[`development_fixture.json`](simulation/scenarios/development_fixture.json),
+which is labeled `DEVELOPMENT / TEST NETWORK ONLY` and is synthetic edge/phase
+data, not a map of any real city. Its recorded metrics are fixture outputs, not
+traffic claims. The fixture has no configurable background traffic demand;
+dynamic `traffic_flows` are rejected for that network. The fake adapter is used
+only for that named network and tests; it is not represented as SUMO. Standard
+tests need no SUMO installation.
+
+Baseline never calls CLEARPATH. CLEARPATH uses a separate deterministic strategy;
+every proposed action passes `ClearPathSafetyGuard`, which validates corridor,
+phase, configured safe transition/release, and bounded duration. Approved
+pre-emption is released when the vehicle passes the signal or the duration ends.
+Comparison uses the same scenario, traffic configuration, and seed for both
+modes; deltas come from adapter-returned metrics and may show improvement, no
+change, or worse results. Unsupported metrics remain `null`.
+
+Simulation state, configuration, metrics, action outcomes, and errors use the
+existing `SimulationRun` JSONB fields. Lifecycle and CLEARPATH updates use the
+existing `EventService`/Redis event path. No schema migration is required.
+
+Optional SUMO setup example (run SUMO with a teammate-provided `.sumocfg`):
+
+```powershell
+$env:SUMO_BINARY = "sumo"
+$env:SUMO_CONFIG_PATH = "D:\\traffic-data\\scenario.sumocfg"
+$env:SUMO_NETWORK_ID = "team-network-v1"
+```
+
+Run simulation coverage with `pytest tests/integration/test_simulation_api.py`;
+those tests use the fake adapter and do not require SUMO. A SUMO smoke run is
+only available when the optional binary, TraCI module, and matching network
+configuration are installed and configured.
+
+### Teammate Integration Contract
+
+See [`docs/SIMULATION_INTEGRATION.md`](docs/SIMULATION_INTEGRATION.md) for the
+network/edge/signal mapping contract to replace the development fixture without
+changing API or service contracts.
+
 ## Run tests
 
 From the `backend` directory, run the database-free suite with:
@@ -237,7 +305,10 @@ the Alembic migration to that database. Do not point it at production data.
 ## Scope
 
 The backend currently covers domain persistence, event/telemetry streams,
-deterministic prediction baselines, and prototype route resilience. Trained ML
-models, SUMO/TraCI, traffic signal control, CLEARPATH, resource allocation,
-human approval, autonomous actions, and workflow orchestration remain out of
-scope.
+deterministic prediction baselines, prototype route resilience, and simulation-
+only SUMO/CLEARPATH integration. Trained ML models, real-world traffic signal
+control, resource allocation, human approval, autonomous actions, and workflow
+orchestration remain out of scope.
+
+> SENTINEL CLEARPATH currently operates only inside the SUMO digital traffic
+> twin. It does not directly control real-world traffic infrastructure.

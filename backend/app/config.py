@@ -1,6 +1,7 @@
 """Environment-driven application settings."""
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -27,6 +28,18 @@ class Settings(BaseSettings):
     route_hazard_threshold: float = Field(default=0.80, ge=0, le=1)
     route_deviation_threshold_meters: float = Field(default=100, gt=0)
     route_min_diversity: float = Field(default=0.30, ge=0, le=1)
+    sumo_binary: str = "sumo"
+    sumo_config_path: str | None = None
+    sumo_network_id: str | None = None
+    simulation_development_network_id: str = "sentinel-development-test-network"
+    simulation_fixture_path: str = str(
+        Path(__file__).resolve().parents[1]
+        / "simulation"
+        / "scenarios"
+        / "development_fixture.json"
+    )
+    simulation_max_signal_preemption_seconds: int = Field(default=30, ge=1, le=300)
+    simulation_approach_distance_meters: float = Field(default=150, gt=0)
 
     @model_validator(mode="after")
     def require_positive_route_weights(self) -> "Settings":

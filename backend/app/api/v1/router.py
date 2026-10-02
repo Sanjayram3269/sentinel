@@ -7,6 +7,7 @@ from app.api.v1.events import router as events_router
 from app.api.v1.missions import router as missions_router
 from app.api.v1.predictions import router as predictions_router
 from app.api.v1.routes import router as routes_router
+from app.api.v1.simulations import router as simulations_router
 from app.api.v1.telemetry import router as telemetry_router
 from app.api.v1.vehicles import router as vehicles_router
 
@@ -18,3 +19,4 @@ router.include_router(events_router)
 router.include_router(telemetry_router)
 router.include_router(predictions_router)
 router.include_router(routes_router)
+router.include_router(simulations_router)

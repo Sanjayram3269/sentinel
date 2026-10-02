@@ -34,6 +34,11 @@ def test_domain_routes_are_registered() -> None:
             ("/api/v1/missions/{mission_id}/routes/{route_id}", "GET"),
             ("/api/v1/missions/{mission_id}/routes/{route_id}/activate", "POST"),
             ("/api/v1/missions/{mission_id}/routes/resilience", "GET"),
+            ("/api/v1/missions/{mission_id}/simulations/baseline", "POST"),
+            ("/api/v1/missions/{mission_id}/simulations/clearpath", "POST"),
+            ("/api/v1/missions/{mission_id}/simulations/compare", "POST"),
+            ("/api/v1/missions/{mission_id}/simulations", "GET"),
+            ("/api/v1/missions/{mission_id}/simulations/{simulation_id}", "GET"),
         (
             "/api/v1/missions/{mission_id}/predictions/{prediction_id}",
             "GET",
