@@ -1,4 +1,3 @@
-from ortools.sat.python import cp_model
 import networkx as nx
 from typing import List, Dict, Any, Tuple
 import time
@@ -93,6 +92,19 @@ def optimize_mission(
     available_units = [u for u in world_state.units if u.unit_id in available_unit_ids and u.available]
     matrix, routes_cache = build_travel_time_matrix(G, available_units, incident, world_state.timestamp_utc, world_state)
     
+    try:
+        from ortools.sat.python import cp_model
+    except ImportError:
+        if config["optimization"]["greedy_fallback"]:
+            return greedy_mission_optimizer(G, incident, world_state, available_units, world_state.timestamp_utc)
+        return OptimizeMissionResponse(
+            source="baseline_fallback",
+            confidence=0.0,
+            reasons=["Optimizer failed: ortools not installed and greedy fallback is disabled."],
+            assignments=[],
+            expected_mission_time_min=0.0
+        )
+        
     model = cp_model.CpModel()
     
     x = {} # x[u, i] = 1 if unit u is assigned to incident

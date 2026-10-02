@@ -1,4 +1,5 @@
 routing:
+  use_prediction: false
   k_shortest_paths: 5
   backup_max_overlap_fraction: 0.4
   contingency_max_overlap_fraction: 0.4
@@ -24,6 +25,7 @@ optimization:
 
 prediction:
   risk_threshold: 1.5
+  failure_margin_min: 5.0
 
 world:
   city_size: 15

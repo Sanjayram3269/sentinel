@@ -51,9 +51,16 @@ def load_dataset(source: str = "synthetic", num_scenarios: int = 50, start_seed:
                 
                 actual_eta = execute_route(G, route_edges, world_state.timestamp_utc, world_state, seed=seed)
                 
-                # Risk threshold from config (mocked as 1.5 here, but usually read from config)
-                risk_threshold = 1.5
-                route_fails = actual_eta == float('inf') or actual_eta > ff_eta * risk_threshold
+                from sentinel_ai.config_loader import config
+                failure_margin_min = config.get("prediction", {}).get("failure_margin_min", 5.0)
+                
+                mean_speed = features.get("mean_current_speed", 0.0)
+                if mean_speed <= 0:
+                    cs_eta = ff_eta
+                else:
+                    cs_eta = (features.get("length", 0.0) / (mean_speed * 1000 / 3600)) / 60.0
+                    
+                route_fails = actual_eta == float('inf') or actual_eta > max(1.5 * cs_eta, cs_eta + failure_margin_min)
                 
                 row = {
                     "scenario_id": f"TRAIN_{i}",

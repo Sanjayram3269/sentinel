@@ -17,11 +17,18 @@ from sentinel_ai.hospital.ranking import rank_destinations as do_rank_destinatio
 from sentinel_ai.optimization.optimizer import optimize_mission as do_optimize_mission
 from sentinel_ai.whatif.counterfactual import simulate_counterfactual as do_simulate_counterfactual
 
-# Load a cached global city graph to avoid rebuilding
-_G = build_city_graph(seed=42)
+_G = None
 
-def predict_eta(req: PredictEtaRequest) -> PredictEtaResponse:
-    p10, p50, p90, baseline, src, conf = do_predict_eta(_G, req.route, req.depart_time_utc, req.world_state)
+def _get_G(G):
+    global _G
+    if G is not None: return G
+    if _G is None:
+        from sentinel_ai.world.city_graph import build_city_graph
+        _G = build_city_graph(seed=42)
+    return _G
+
+def predict_eta(req: PredictEtaRequest, *, G: Any = None) -> PredictEtaResponse:
+    p10, p50, p90, baseline, src, conf = do_predict_eta(_get_G(G), req.route, req.depart_time_utc, req.world_state)
     return PredictEtaResponse(
         source=src,
         confidence=conf,
@@ -31,8 +38,8 @@ def predict_eta(req: PredictEtaRequest) -> PredictEtaResponse:
         baseline_eta_min=baseline
     )
 
-def predict_route_risk(req: PredictRouteRiskRequest) -> PredictRouteRiskResponse:
-    fails, prob, src, conf = do_predict_risk(_G, req.route, req.depart_time_utc, req.world_state)
+def predict_route_risk(req: PredictRouteRiskRequest, *, G: Any = None) -> PredictRouteRiskResponse:
+    fails, prob, src, conf = do_predict_risk(_get_G(G), req.route, req.depart_time_utc, req.world_state)
     return PredictRouteRiskResponse(
         source=src,
         confidence=conf,
@@ -40,16 +47,16 @@ def predict_route_risk(req: PredictRouteRiskRequest) -> PredictRouteRiskResponse
         failure_probability=prob
     )
 
-def generate_and_score_routes(req: GenerateRoutesRequest) -> GenerateRoutesResponse:
-    routes = do_generate_routes(_G, req.origin, req.destination, req.depart_time_utc, req.world_state)
+def generate_and_score_routes(req: GenerateRoutesRequest, *, G: Any = None) -> GenerateRoutesResponse:
+    routes = do_generate_routes(_get_G(G), req.origin, req.destination, req.depart_time_utc, req.world_state)
     return GenerateRoutesResponse(
         source="ml",
         confidence=0.9,
         routes=routes
     )
 
-def compute_resilience(req: ComputeResilienceRequest) -> ComputeResilienceResponse:
-    score, comps, reasons = do_compute_resilience(req.routes, req.world_state, req.corridor_readiness)
+def compute_resilience(req: ComputeResilienceRequest, *, G: Any = None) -> ComputeResilienceResponse:
+    score, comps, reasons = do_compute_resilience(req.routes, req.world_state, req.corridor_readiness) # do_compute_resilience doesn't take G
     return ComputeResilienceResponse(
         source="ml",
         confidence=0.9,
@@ -58,30 +65,28 @@ def compute_resilience(req: ComputeResilienceRequest) -> ComputeResilienceRespon
         components=comps
     )
 
-def rank_destinations(req: RankDestinationsRequest) -> RankDestinationsResponse:
-    rankings = do_rank_destinations(_G, req.origin, req.depart_time_utc, req.world_state, req.required_capabilities)
+def rank_destinations(req: RankDestinationsRequest, *, G: Any = None) -> RankDestinationsResponse:
+    rankings = do_rank_destinations(_get_G(G), req.origin, req.depart_time_utc, req.world_state, req.required_capabilities)
     return RankDestinationsResponse(
         source="ml",
         confidence=0.9,
         rankings=rankings
     )
 
-def optimize_mission(req: OptimizeMissionRequest) -> OptimizeMissionResponse:
-    return do_optimize_mission(_G, req.incident_id, req.world_state, req.available_unit_ids)
+def optimize_mission(req: OptimizeMissionRequest, *, G: Any = None) -> OptimizeMissionResponse:
+    return do_optimize_mission(_get_G(G), req.incident_id, req.world_state, req.available_unit_ids)
 
-def simulate_counterfactual(req: SimulateCounterfactualRequest) -> SimulateCounterfactualResponse:
-    # Need current plan eta to calculate delta
-    current_plan = optimize_mission(req.mission_request)
+def simulate_counterfactual(req: SimulateCounterfactualRequest, *, G: Any = None) -> SimulateCounterfactualResponse:
+    current_plan = optimize_mission(req.mission_request, G=G)
     current_eta = current_plan.expected_mission_time_min
     
-    # Needs current resilience
-    current_resilience = 0.0 # simplified
+    current_resilience = 0.0
     if current_plan.assignments:
         u_id = current_plan.assignments[0].unit_id
         incident = next((i for i in req.world_state.incidents if i.incident_id == req.mission_request.incident_id), None)
         u = next((unit for unit in req.world_state.units if unit.unit_id == u_id), None)
         if incident and u:
-            routes = do_generate_routes(_G, u.position, incident.node, req.world_state.timestamp_utc, req.world_state)
+            routes = do_generate_routes(_get_G(G), u.position, incident.node, req.world_state.timestamp_utc, req.world_state)
             current_resilience, _, _ = do_compute_resilience(routes, req.world_state)
             
-    return do_simulate_counterfactual(_G, req.world_state, req.mission_request, req.change, current_eta, current_resilience)
+    return do_simulate_counterfactual(_get_G(G), req.world_state, req.mission_request, req.change, current_eta, current_resilience)

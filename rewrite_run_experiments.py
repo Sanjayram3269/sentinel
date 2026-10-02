@@ -1,4 +1,6 @@
-import pandas as pd
+import os
+
+content = """import pandas as pd
 import numpy as np
 import networkx as nx
 import os
@@ -65,7 +67,7 @@ def execute_mission(G: nx.DiGraph, depart_node: str, target_node: str, depart_ti
     except nx.NetworkXNoPath:
         return float('inf'), False
         
-    while current_node != target_node and (current_time - depart_time) < 120.0 * 60:
+    while current_node != target_node:
         iters += 1
         
         try:
@@ -211,16 +213,13 @@ def execute_mission(G: nx.DiGraph, depart_node: str, target_node: str, depart_ti
         prev_node = current_node
         current_node = v
         
-    if current_node != target_node:
-        return float('inf'), False
     return tt_sum / 60.0, True
 
 def execute_baseline_B(G, depart_node, target_node, depart_time, true_world, seed, delay_s, dropout_p):
     return execute_mission(G, depart_node, target_node, depart_time, true_world, seed, delay_s, dropout_p, use_prediction=False)
 
 def execute_sentinel(G, depart_node, target_node, depart_time, true_world, seed, delay_s, dropout_p):
-    use_pred = config.get("routing", {}).get("use_prediction", False)
-    return execute_mission(G, depart_node, target_node, depart_time, true_world, seed, delay_s, dropout_p, use_prediction=use_pred)
+    return execute_mission(G, depart_node, target_node, depart_time, true_world, seed, delay_s, dropout_p, use_prediction=True)
 
 def is_infeasible(G, source, target, depart_time, world_state, seed):
     G_clair = G.copy()
@@ -275,7 +274,7 @@ def run_experiments(output_dir="sentinel_ai/experiments/output/"):
     print(f"Validation Seeds: {val_seeds[0]}-{val_seeds[-1]}")
     
     test_seeds = list(range(200, 250))
-    print(f"Test Seeds: {test_seeds[0]}-{test_seeds[-1]}\n")
+    print(f"Test Seeds: {test_seeds[0]}-{test_seeds[-1]}\\n")
     
     delay_settings = [0, 60, 120]
     dropout_settings = [0.0, 0.2]
@@ -300,7 +299,7 @@ def run_experiments(output_dir="sentinel_ai/experiments/output/"):
     df = pd.DataFrame(results)
     df.to_csv(os.path.join(output_dir, "closed_loop_results.csv"), index=False)
     
-    print("\n--- FINAL PROTOCOL EXPERIMENT RESULTS (Mean ± 95% CI) ---")
+    print("\\n--- FINAL PROTOCOL EXPERIMENT RESULTS (Mean ± 95% CI) ---")
     
     for s_type in scenarios:
         for delay_s in delay_settings:
@@ -322,3 +321,6 @@ def run_experiments(output_dir="sentinel_ai/experiments/output/"):
 
 if __name__ == "__main__":
     run_experiments()
+"""
+with open("sentinel_ai/experiments/run_experiments.py", "w") as f:
+    f.write(content)

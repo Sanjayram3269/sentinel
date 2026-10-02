@@ -1,7 +1,7 @@
 # SENTINEL API Contracts
 
 ## 1. Predict ETA
-**Function:** `predict_eta(req: PredictEtaRequest) -> PredictEtaResponse`
+**Function:** `predict_eta(req: PredictEtaRequest, *, G: Any = None) -> PredictEtaResponse`
 **Request Example:**
 ```json
 {
@@ -35,7 +35,7 @@
 ```
 
 ## 2. Generate and Score Routes
-**Function:** `generate_and_score_routes(req: GenerateRoutesRequest) -> GenerateRoutesResponse`
+**Function:** `generate_and_score_routes(req: GenerateRoutesRequest, *, G: Any = None) -> GenerateRoutesResponse`
 **Request Example:**
 ```json
 {
@@ -71,7 +71,7 @@
 ```
 
 ## 3. Compute Resilience
-**Function:** `compute_resilience(req: ComputeResilienceRequest) -> ComputeResilienceResponse`
+**Function:** `compute_resilience(req: ComputeResilienceRequest, *, G: Any = None) -> ComputeResilienceResponse`
 **Request Example:**
 ```json
 {
@@ -103,7 +103,7 @@
 ```
 
 ## 4. Rank Destinations
-**Function:** `rank_destinations(req: RankDestinationsRequest) -> RankDestinationsResponse`
+**Function:** `rank_destinations(req: RankDestinationsRequest, *, G: Any = None) -> RankDestinationsResponse`
 **Request Example:**
 ```json
 {
@@ -136,7 +136,7 @@
 ```
 
 ## 5. Optimize Mission
-**Function:** `optimize_mission(req: OptimizeMissionRequest) -> OptimizeMissionResponse`
+**Function:** `optimize_mission(req: OptimizeMissionRequest, *, G: Any = None) -> OptimizeMissionResponse`
 **Request Example:**
 ```json
 {
@@ -169,7 +169,7 @@
 ```
 
 ## 6. Simulate Counterfactual
-**Function:** `simulate_counterfactual(req: SimulateCounterfactualRequest) -> SimulateCounterfactualResponse`
+**Function:** `simulate_counterfactual(req: SimulateCounterfactualRequest, *, G: Any = None) -> SimulateCounterfactualResponse`
 **Request Example:**
 ```json
 {

@@ -1,6 +1,6 @@
 import pytest
 from sentinel_ai.world.scenario import generate_scenario
-from sentinel_ai.api import _G
+from sentinel_ai.world.city_graph import build_city_graph
 from sentinel_ai.contracts import *
 from sentinel_ai.routing.candidates import generate_and_score_routes, compute_overlap_fraction
 from sentinel_ai.routing.resilience import compute_resilience
@@ -9,12 +9,14 @@ from sentinel_ai.optimization.optimizer import optimize_mission, greedy_mission_
 from sentinel_ai.whatif.counterfactual import simulate_counterfactual, replan
 from sentinel_ai.world.simulator import execute_route
 
+G = build_city_graph(seed=42)
+
 def test_routing_rules():
     state = generate_scenario("TEST", 42, "closure")
     req = GenerateRoutesRequest(
         origin="N_0_0", destination="N_9_9", depart_time_utc=state.timestamp_utc, world_state=state
     )
-    routes = generate_and_score_routes(_G, req.origin, req.destination, req.depart_time_utc, req.world_state)
+    routes = generate_and_score_routes(G, req.origin, req.destination, req.depart_time_utc, req.world_state)
     
     # 1. Closed edges never used
     for r in routes:
@@ -30,7 +32,7 @@ def test_routing_rules():
 
 def test_resilience():
     state = generate_scenario("TEST", 42, "mixed")
-    routes = generate_and_score_routes(_G, "N_0_0", "N_9_9", state.timestamp_utc, state)
+    routes = generate_and_score_routes(G, "N_0_0", "N_9_9", state.timestamp_utc, state)
     score, components, reasons = compute_resilience(routes, state)
     
     assert 0.0 <= score <= 100.0
@@ -42,7 +44,7 @@ def test_hospital_ranking():
     # Force H1 to be unavailable
     state.hospitals[0].available = False
     
-    rankings = rank_destinations(_G, "N_5_5", state.timestamp_utc, state, ["trauma"])
+    rankings = rank_destinations(G, "N_5_5", state.timestamp_utc, state, ["trauma"])
     
     h1 = next((h for h in rankings if h.hospital_id == state.hospitals[0].hospital_id), None)
     assert h1 is not None
@@ -62,7 +64,7 @@ def test_optimizer_constraints_and_fallback():
     available_units = [u.unit_id for u in state.units]
     
     # CP-SAT
-    plan = optimize_mission(_G, incident.incident_id, state, available_units)
+    plan = optimize_mission(G, incident.incident_id, state, available_units)
     assert plan.expected_mission_time_min > 0
     assigned_units = [a.unit_id for a in plan.assignments]
     
@@ -71,7 +73,7 @@ def test_optimizer_constraints_and_fallback():
         assert any(u.unit_type == req_type for u in state.units if u.unit_id in assigned_units)
         
     # Greedy fallback
-    greedy_plan = greedy_mission_optimizer(_G, incident, state, [u for u in state.units if u.unit_id in available_units], state.timestamp_utc)
+    greedy_plan = greedy_mission_optimizer(G, incident, state, [u for u in state.units if u.unit_id in available_units], state.timestamp_utc)
     assert greedy_plan.source == "baseline_fallback"
     assert len(greedy_plan.assignments) > 0
 
@@ -80,14 +82,14 @@ def test_whatif_replan():
     incident = state.incidents[0]
     req = OptimizeMissionRequest(incident_id=incident.incident_id, world_state=state, available_unit_ids=[u.unit_id for u in state.units])
     
-    plan = optimize_mission(_G, incident.incident_id, state, req.available_unit_ids)
+    plan = optimize_mission(G, incident.incident_id, state, req.available_unit_ids)
     
     change = CounterfactualChange(change_type="close_edge", change_data={"edge_id": "N_5_5->N_5_6"})
-    cf_res = simulate_counterfactual(_G, state, req, change, plan.expected_mission_time_min, 50.0)
+    cf_res = simulate_counterfactual(G, state, req, change, plan.expected_mission_time_min, 50.0)
     
     assert cf_res.new_plan.expected_mission_time_min >= 0
     
-    new_plan, latency = replan(_G, state, change, req)
+    new_plan, latency = replan(G, state, change, req)
     assert latency > 0
     assert new_plan.expected_mission_time_min == cf_res.new_plan.expected_mission_time_min
 
@@ -102,8 +104,8 @@ def test_no_future_knowledge():
     
     # If the feature extractor accidentally used a future time, the hazard overlap would be different.
     # We verify it takes depart_time_utc explicitly.
-    features_now = compute_route_features(_G, route, state.timestamp_utc, state)
-    features_future = compute_route_features(_G, route, state.timestamp_utc + 3600, state)
+    features_now = compute_route_features(G, route, state.timestamp_utc, state)
+    features_future = compute_route_features(G, route, state.timestamp_utc + 3600, state)
     
     # The extractor does not mutate the state. It reads hazard radius based on time elapsed since state.timestamp_utc
     # Ensure it works correctly.

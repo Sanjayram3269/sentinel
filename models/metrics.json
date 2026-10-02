@@ -1,0 +1,29 @@
+{
+  "seeds_used": "300-449",
+  "artifact_hash": "630438b98518504ee7b45f9b5fe9417b",
+  "use_ml_p50": true,
+  "eta_evaluation": {
+    "n": 726,
+    "free_flow": {
+      "mae": 3.8551284148621923,
+      "rmse": 19.04441957614226
+    },
+    "current_speed": {
+      "mae": 3.3781856684892966,
+      "rmse": 18.59882915961551
+    },
+    "sentinel_p50": {
+      "mae": 2.453010285984669,
+      "rmse": 16.209997460495874
+    },
+    "interval_coverage": 0.8168044077134986,
+    "interval_mean_width": 1.8678021820007726
+  },
+  "classifier_evaluation": {
+    "precision": 0.9130434782608695,
+    "recall": 0.9264705882352942,
+    "f1": 0.9197080291970803,
+    "pr_auc": 0.9707402307235535,
+    "positive_rate": 0.22972972972972974
+  }
+}

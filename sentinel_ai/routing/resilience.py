@@ -55,7 +55,7 @@ def compute_resilience(
         # Assuming hazard penalty logic (simplified here)
         if primary.score > 10.0: # arbitrary threshold for demo
             components["hazard_exposure"] = max(0.0, 100.0 - (primary.score - 10.0)*5.0)
-    reasons.append(f"Hazard exposure score is {components['hazard_exposure']:.0f}%.")
+    reasons.append(f"Hazard safety score is {components['hazard_exposure']:.0f}% (0% means highly exposed).")
     
     # 5. Destination Availability
     total_hospitals = len(world_state.hospitals)
