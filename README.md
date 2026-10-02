@@ -22,3 +22,5 @@ To integrate this module into the larger system:
 2. Use the facade `sentinel_ai/api.py`. It is the **only** entry point the backend should call.
 3. Every response includes `contract_version`, `model_version`, `source` (ml or baseline_fallback), `confidence`, `reasons`, and `evidence`.
 4. Ensure units match: ETA is in minutes, distances in meters, speed in km/h, timestamps are UTC.
+
+# sentinel_abhy_version
