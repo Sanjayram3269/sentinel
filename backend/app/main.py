@@ -9,6 +9,8 @@ from app.api.v1.router import router as api_v1_router
 from app.config import get_settings
 from app.db.session import engine
 from app.services.redis import create_redis_client
+from app.services.websocket_manager import WebSocketManager
+from app.api.v1.websockets import router as websocket_router
 
 
 @asynccontextmanager
@@ -16,9 +18,11 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     """Manage service clients for the lifetime of the application."""
     settings = get_settings()
     application.state.redis = create_redis_client(settings.redis_url)
+    application.state.websocket_manager = WebSocketManager()
     try:
         yield
     finally:
+        await application.state.websocket_manager.shutdown()
         await application.state.redis.aclose()
         await engine.dispose()
 
@@ -34,6 +38,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(api_v1_router)
+app.include_router(websocket_router)
 
 
 @app.get("/", tags=["system"])

@@ -5,6 +5,7 @@ from enum import Enum
 
 class MissionStatus(str, Enum):
     CREATED = "CREATED"
+    DISPATCHED = "DISPATCHED"
     ACTIVE = "ACTIVE"
     PAUSED = "PAUSED"
     COMPLETED = "COMPLETED"

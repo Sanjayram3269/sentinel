@@ -75,6 +75,9 @@ class VehicleTelemetry(UUIDPrimaryKey, Base):
     speed: Mapped[float | None] = mapped_column(Float)
     heading: Mapped[float | None] = mapped_column(Float)
     altitude: Mapped[float | None] = mapped_column(Float)
+    status: Mapped[VehicleStatus | None] = mapped_column(
+        Enum(VehicleStatus, name="vehicle_status", values_callable=enum_values)
+    )
     source: Mapped[str] = mapped_column(String(80), nullable=False)
 
     vehicle: Mapped["Vehicle"] = relationship(back_populates="telemetry")

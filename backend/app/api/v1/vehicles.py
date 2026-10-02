@@ -31,6 +31,8 @@ def _vehicle_read(
             if latitude is not None and longitude is not None
             else None
         ),
+        latitude=latitude,
+        longitude=longitude,
         heading=vehicle.heading,
         speed=vehicle.speed,
         created_at=vehicle.created_at,

@@ -16,8 +16,8 @@ from app.models.enums import (
 
 
 class GeoPoint(BaseModel):
-    latitude: float = Field(ge=-90, le=90)
-    longitude: float = Field(ge=-180, le=180)
+    latitude: float = Field(ge=-90, le=90, allow_inf_nan=False)
+    longitude: float = Field(ge=-180, le=180, allow_inf_nan=False)
 
 
 class MissionCreate(BaseModel):
@@ -90,6 +90,8 @@ class VehicleRead(BaseModel):
     call_sign: str
     capability: dict[str, Any]
     current_location: GeoPoint | None
+    latitude: float | None = None
+    longitude: float | None = None
     heading: float | None
     speed: float | None
     created_at: datetime
@@ -113,12 +115,19 @@ class EventState(BaseModel):
     event_type: str
     source: str
     occurred_at: datetime
+    correlation_id: UUID
     payload: dict[str, Any]
 
 
 class MissionStateRead(BaseModel):
+    mission_id: UUID
+    status: MissionStatus
+    incident: IncidentRead | None = None
     mission: MissionRead
     incidents: list[IncidentRead]
     vehicles: list[VehicleRead]
     active_routes: list[RouteState]
+    routes: list[RouteState]
+    active_plan: dict[str, Any] | None = None
     latest_events: list[EventState]
+    updated_at: datetime

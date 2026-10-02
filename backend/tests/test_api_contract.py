@@ -24,8 +24,20 @@ def test_domain_routes_are_registered() -> None:
         ("/api/v1/incidents/{incident_id}", "GET"),
         ("/api/v1/vehicles", "POST"),
         ("/api/v1/vehicles/{vehicle_id}", "GET"),
+        ("/api/v1/missions/{mission_id}/events", "POST"),
+        ("/api/v1/missions/{mission_id}/events", "GET"),
+        ("/api/v1/missions/{mission_id}/telemetry", "POST"),
     }
     assert expected <= registered
+    assert any(route.path == "/ws/missions/{mission_id}" for route in app.routes)
+
+
+def test_root_and_health_endpoints_remain_available() -> None:
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as client:
+        assert client.get("/").status_code == 200
+        assert client.get("/health").json()["status"] == "ok"
 
 
 def test_incident_time_input_must_be_timezone_aware_and_is_normalized() -> None:
