@@ -1,0 +1,30 @@
+routing:
+  k_shortest_paths: 5
+  backup_max_overlap_fraction: 0.4
+  contingency_max_overlap_fraction: 0.4
+  score_weights:
+    w1_eta_p50: 0.4
+    w2_eta_p90_spread: 0.2
+    w3_risk: 0.2
+    w4_hazard: 0.2
+
+resilience:
+  weights:
+    route_redundancy: 0.25
+    backup_viability: 0.25
+    failure_probability: 0.2
+    hazard_exposure: 0.1
+    destination_availability: 0.1
+    resource_availability: 0.05
+    corridor_readiness: 0.05
+
+optimization:
+  time_limit_seconds: 1.5
+  greedy_fallback: true
+
+prediction:
+  risk_threshold: 1.5
+
+world:
+  city_size: 15
+  seed: 42

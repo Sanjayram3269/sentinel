@@ -1,0 +1,87 @@
+from typing import List, Dict, Any
+
+from sentinel_ai.contracts import (
+    PredictEtaRequest, PredictEtaResponse,
+    PredictRouteRiskRequest, PredictRouteRiskResponse,
+    GenerateRoutesRequest, GenerateRoutesResponse,
+    ComputeResilienceRequest, ComputeResilienceResponse,
+    RankDestinationsRequest, RankDestinationsResponse,
+    OptimizeMissionRequest, OptimizeMissionResponse,
+    SimulateCounterfactualRequest, SimulateCounterfactualResponse
+)
+from sentinel_ai.world.city_graph import build_city_graph
+from sentinel_ai.prediction.inference import predict_eta as do_predict_eta, predict_risk as do_predict_risk
+from sentinel_ai.routing.candidates import generate_and_score_routes as do_generate_routes
+from sentinel_ai.routing.resilience import compute_resilience as do_compute_resilience
+from sentinel_ai.hospital.ranking import rank_destinations as do_rank_destinations
+from sentinel_ai.optimization.optimizer import optimize_mission as do_optimize_mission
+from sentinel_ai.whatif.counterfactual import simulate_counterfactual as do_simulate_counterfactual
+
+# Load a cached global city graph to avoid rebuilding
+_G = build_city_graph(seed=42)
+
+def predict_eta(req: PredictEtaRequest) -> PredictEtaResponse:
+    p10, p50, p90, baseline, src, conf = do_predict_eta(_G, req.route, req.depart_time_utc, req.world_state)
+    return PredictEtaResponse(
+        source=src,
+        confidence=conf,
+        eta_p10_min=p10,
+        eta_p50_min=p50,
+        eta_p90_min=p90,
+        baseline_eta_min=baseline
+    )
+
+def predict_route_risk(req: PredictRouteRiskRequest) -> PredictRouteRiskResponse:
+    fails, prob, src, conf = do_predict_risk(_G, req.route, req.depart_time_utc, req.world_state)
+    return PredictRouteRiskResponse(
+        source=src,
+        confidence=conf,
+        route_fails=fails,
+        failure_probability=prob
+    )
+
+def generate_and_score_routes(req: GenerateRoutesRequest) -> GenerateRoutesResponse:
+    routes = do_generate_routes(_G, req.origin, req.destination, req.depart_time_utc, req.world_state)
+    return GenerateRoutesResponse(
+        source="ml",
+        confidence=0.9,
+        routes=routes
+    )
+
+def compute_resilience(req: ComputeResilienceRequest) -> ComputeResilienceResponse:
+    score, comps, reasons = do_compute_resilience(req.routes, req.world_state, req.corridor_readiness)
+    return ComputeResilienceResponse(
+        source="ml",
+        confidence=0.9,
+        reasons=reasons,
+        resilience_score=score,
+        components=comps
+    )
+
+def rank_destinations(req: RankDestinationsRequest) -> RankDestinationsResponse:
+    rankings = do_rank_destinations(_G, req.origin, req.depart_time_utc, req.world_state, req.required_capabilities)
+    return RankDestinationsResponse(
+        source="ml",
+        confidence=0.9,
+        rankings=rankings
+    )
+
+def optimize_mission(req: OptimizeMissionRequest) -> OptimizeMissionResponse:
+    return do_optimize_mission(_G, req.incident_id, req.world_state, req.available_unit_ids)
+
+def simulate_counterfactual(req: SimulateCounterfactualRequest) -> SimulateCounterfactualResponse:
+    # Need current plan eta to calculate delta
+    current_plan = optimize_mission(req.mission_request)
+    current_eta = current_plan.expected_mission_time_min
+    
+    # Needs current resilience
+    current_resilience = 0.0 # simplified
+    if current_plan.assignments:
+        u_id = current_plan.assignments[0].unit_id
+        incident = next((i for i in req.world_state.incidents if i.incident_id == req.mission_request.incident_id), None)
+        u = next((unit for unit in req.world_state.units if unit.unit_id == u_id), None)
+        if incident and u:
+            routes = do_generate_routes(_G, u.position, incident.node, req.world_state.timestamp_utc, req.world_state)
+            current_resilience, _, _ = do_compute_resilience(routes, req.world_state)
+            
+    return do_simulate_counterfactual(_G, req.world_state, req.mission_request, req.change, current_eta, current_resilience)
