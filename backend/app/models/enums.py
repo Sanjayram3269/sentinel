@@ -73,6 +73,7 @@ class HazardStatus(str, Enum):
 class PredictionType(str, Enum):
     ETA = "ETA"
     CONGESTION = "CONGESTION"
+    ROUTE_FAILURE = "ROUTE_FAILURE"
     ROUTE_RISK = "ROUTE_RISK"
     HAZARD_IMPACT = "HAZARD_IMPACT"
     OTHER = "OTHER"

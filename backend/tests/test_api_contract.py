@@ -27,6 +27,12 @@ def test_domain_routes_are_registered() -> None:
         ("/api/v1/missions/{mission_id}/events", "POST"),
         ("/api/v1/missions/{mission_id}/events", "GET"),
         ("/api/v1/missions/{mission_id}/telemetry", "POST"),
+        ("/api/v1/missions/{mission_id}/predictions", "POST"),
+        ("/api/v1/missions/{mission_id}/predictions", "GET"),
+        (
+            "/api/v1/missions/{mission_id}/predictions/{prediction_id}",
+            "GET",
+        ),
     }
     assert expected <= registered
     assert any(route.path == "/ws/missions/{mission_id}" for route in app.routes)

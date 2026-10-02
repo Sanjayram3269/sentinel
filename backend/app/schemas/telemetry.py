@@ -14,7 +14,11 @@ class TelemetryCreate(BaseModel):
     timestamp: datetime
     latitude: float = Field(ge=-90, le=90, allow_inf_nan=False)
     longitude: float = Field(ge=-180, le=180, allow_inf_nan=False)
-    speed: float = Field(ge=0, allow_inf_nan=False)
+    speed: float = Field(
+        ge=0,
+        allow_inf_nan=False,
+        description="Vehicle speed in meters per second.",
+    )
     heading: float | None = Field(default=None, ge=0, lt=360, allow_inf_nan=False)
     status: VehicleStatus | None = None
 

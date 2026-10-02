@@ -83,9 +83,64 @@ The initial JSON endpoints are:
   active routes, and the latest 20 events
 - `POST /api/v1/incidents` and `GET /api/v1/incidents/{incident_id}`
 - `POST /api/v1/vehicles` and `GET /api/v1/vehicles/{vehicle_id}`
+- `POST` and `GET /api/v1/missions/{mission_id}/events`
+- `POST /api/v1/missions/{mission_id}/telemetry`
+- `WS /ws/missions/{mission_id}` for the mission's normalized event stream
 
 Creation endpoints return `201`; lookups return `404` for unknown IDs. Point
 inputs use `{ "latitude": number, "longitude": number }`.
+
+## Prediction And Intelligence
+
+Task 4 exposes explicit prediction execution and retrieval:
+
+- `POST /api/v1/missions/{mission_id}/predictions` runs one requested baseline
+- `GET /api/v1/missions/{mission_id}/predictions` returns bounded history, with
+    optional `prediction_type`, `limit` (maximum 200), `before`, and `after`
+- `GET /api/v1/missions/{mission_id}/predictions/{prediction_id}` retrieves one
+    mission-scoped result
+
+The API accepts `ETA`, `ROUTE_FAILURE`, `CONGESTION`, and `HAZARD_IMPACT`.
+Predictors implement a replaceable `Predictor` interface and consume a bounded,
+deterministic context built from the existing mission state and PostGIS data.
+Execution is explicit; no background or event-triggered prediction loop runs.
+
+All predictors currently use deterministic baseline rules named
+`baseline_rule_v1`; they are not trained machine-learning models and make no
+accuracy claim. For route-failure and hazard-impact results, `probability` is a
+deterministic bounded risk score, not a calibrated statistical probability.
+`confidence` instead represents the availability and quality of observed
+signals. Every result includes structured factors with descriptions; results
+without required data use `status: UNAVAILABLE`, a reason, and `missing_inputs`.
+
+Baseline methods:
+
+- ETA reports an estimate for each active route, using route distance in meters
+    divided by current vehicle speed in meters per second, then the route's
+    estimated duration as a fallback. It does not choose a route.
+- Route-failure risk sums deterministic contributions for missing active routes,
+    route risk (`0.4 × risk_score`), recent deviations (`0.15`), closures (`0.2`),
+    severe congestion (`0.15`), and hazards within one kilometer
+    (`0.2 × severity / 5`); a missing active route contributes `0.45`. The sum is
+    capped at 1.0. Risk levels are LOW below 0.25, MODERATE below 0.65, otherwise
+    HIGH.
+- Congestion uses a recent observed congestion event when available; otherwise
+    it compares current vehicle speed with route distance divided by estimated
+    duration and reports the median relative-speed level.
+- Hazard impact uses PostGIS route-to-hazard distance and stored hazard
+    severity. The baseline impact score is severity divided by five, multiplied
+    by a linear proximity weight within five kilometers. A missing spatial
+    comparison is unavailable, not a low-impact result.
+
+Congestion levels use the route-relative congestion score: HIGH at 0.65 or
+above, MODERATE at 0.3 or above, otherwise LOW. An observed congestion event is
+used directly when its level is LOW, MODERATE/MEDIUM, or HIGH/SEVERE. ETA reports
+one result per active route instead of selecting among routes.
+
+Predictions are persisted before a `PREDICTION_UPDATED` event is sent through
+the Task 3 event service and Redis publisher. A publish failure returns a
+controlled error; the prediction remains stored. Prediction is kept separate
+from route selection, optimization, safety validation, approval, and action.
 
 ## Run tests
 
@@ -105,6 +160,7 @@ the Alembic migration to that database. Do not point it at production data.
 
 ## Scope
 
-This task establishes domain persistence and basic APIs only. Prediction
-algorithms, routing, optimization, simulation execution, signal control,
-CLEARPATH, and workflow orchestration are intentionally out of scope.
+The backend currently covers domain persistence, event/telemetry streams, and
+deterministic prediction baselines. Trained ML models, routing, optimization,
+simulation execution, signal control, CLEARPATH, and workflow orchestration
+remain out of scope.

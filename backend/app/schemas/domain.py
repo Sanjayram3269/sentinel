@@ -79,7 +79,12 @@ class VehicleCreate(BaseModel):
     capability: dict[str, Any] = Field(default_factory=dict)
     current_location: GeoPoint | None = None
     heading: float | None = Field(default=None, ge=0, lt=360)
-    speed: float | None = Field(default=None, ge=0)
+    speed: float | None = Field(
+        default=None,
+        ge=0,
+        allow_inf_nan=False,
+        description="Vehicle speed in meters per second.",
+    )
 
 
 class VehicleRead(BaseModel):
