@@ -249,16 +249,22 @@ persisted FAILED simulation. SUMO is optional for the standard test suite.
 `FakeSimulationAdapter` runs the bundled
 [`development_fixture.json`](simulation/scenarios/development_fixture.json),
 which is labeled `DEVELOPMENT / TEST NETWORK ONLY` and is synthetic edge/phase
-data, not a map of any real city. Its recorded metrics are fixture outputs, not
-traffic claims. The fixture has no configurable background traffic demand;
-dynamic `traffic_flows` are rejected for that network. The fake adapter is used
-only for that named network and tests; it is not represented as SUMO. Standard
-tests need no SUMO installation.
+data, not a map of any real city. It replays a declared trace and *measures* the
+result (travel time, stopped time, stops, mean speed, completion); it stores no
+per-mode metric table. The fixture models no traffic response to signal control,
+so a baseline and a CLEARPATH run of it measure identically and the comparison
+correctly reports a 0% change rather than an invented improvement. The fixture
+has no configurable background traffic demand; dynamic `traffic_flows` are
+rejected for that network. The fake adapter is used only for that named network
+and tests; it is not represented as SUMO. Standard tests need no SUMO
+installation.
 
 Baseline never calls CLEARPATH. CLEARPATH uses a separate deterministic strategy;
 every proposed action passes `ClearPathSafetyGuard`, which validates corridor,
-phase, configured safe transition/release, and bounded duration. Approved
-pre-emption is released when the vehicle passes the signal or the duration ends.
+phase, configured safe transition/release, and bounded duration. A corridor
+signal is requested at most once per run and is never re-armed. Approved
+pre-emption is released when the vehicle passes the signal, when the duration
+ends, or at teardown, so a run can never end with a signal still pre-empted.
 Comparison uses the same scenario, traffic configuration, and seed for both
 modes; deltas come from adapter-returned metrics and may show improvement, no
 change, or worse results. Unsupported metrics remain `null`.
@@ -276,9 +282,12 @@ $env:SUMO_NETWORK_ID = "team-network-v1"
 ```
 
 Run simulation coverage with `pytest tests/integration/test_simulation_api.py`;
-those tests use the fake adapter and do not require SUMO. A SUMO smoke run is
-only available when the optional binary, TraCI module, and matching network
-configuration are installed and configured.
+those tests use the fake adapter and do not require SUMO. A real SUMO smoke run
+lives in `tests/integration/test_sumo_adapter_smoke.py` and is skipped unless
+`SENTINEL_SUMO_SMOKE=1` plus `SUMO_BINARY`, `SUMO_CONFIG_PATH`,
+`SUMO_NETWORK_ID`, and `SENTINEL_SUMO_SMOKE_EDGES` are set. It never fabricates
+a result: an unavailable or unconfigured SUMO installation is reported as a
+skip, and a simulator rejection is surfaced as an explicit skip, not a pass.
 
 ### Teammate Integration Contract
 

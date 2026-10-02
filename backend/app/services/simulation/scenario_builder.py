@@ -60,15 +60,20 @@ class ScenarioBuilder:
 
         signals: list[SignalDefinition] = []
         if request.traffic_signal_ids:
+            requested_ids = set(request.traffic_signal_ids)
+            if len(requested_ids) != len(request.traffic_signal_ids):
+                raise HTTPException(
+                    status_code=422, detail="Traffic signal mapping contains duplicates"
+                )
             rows = (
                 await db.scalars(
                     select(TrafficSignal)
-                    .where(TrafficSignal.id.in_(request.traffic_signal_ids))
+                    .where(TrafficSignal.id.in_(requested_ids))
                     .order_by(TrafficSignal.id)
-                    .limit(100)
+                    .limit(len(requested_ids))
                 )
             ).all()
-            if len(rows) != len(set(request.traffic_signal_ids)):
+            if len(rows) != len(requested_ids):
                 raise HTTPException(status_code=404, detail="Traffic signal not found")
             for signal in rows:
                 if not signal.enabled:
@@ -96,6 +101,11 @@ class ScenarioBuilder:
                         status_code=422,
                         detail="Traffic signal is not mapped to the supplied route corridor",
                     )
+                if definition.signal_id in {item.signal_id for item in signals}:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="Two traffic signals claim the same simulator signal ID",
+                    )
                 signals.append(definition)
 
         return SimulationScenario(
@@ -121,6 +131,11 @@ class ScenarioBuilder:
         route_edge_ids: list[str],
         traffic_flows: list[TrafficFlow],
     ) -> None:
+        """Accept only explicitly configured network identifiers.
+
+        SENTINEL geographic geometry is never converted into simulator edge IDs;
+        every edge must be supplied by the caller or come from a named network.
+        """
         if network_id == self.settings.simulation_development_network_id:
             fixture = json.loads(
                 Path(self.settings.simulation_fixture_path).read_text(encoding="utf-8")
@@ -136,13 +151,11 @@ class ScenarioBuilder:
                     status_code=422,
                     detail="Route edge mapping is not present in the development fixture",
                 )
-            for flow in traffic_flows:
-                if not set(flow.edge_ids) <= known_edges:
-                    raise HTTPException(
-                        status_code=422,
-                        detail="Traffic flow references an edge outside the development fixture",
-                    )
             return
 
         if not self.settings.sumo_network_id or network_id != self.settings.sumo_network_id:
-            raise HTTPException(status_code=422, detail="Simulation network mapping is unavailable")
+            raise HTTPException(
+                status_code=422, detail="Simulation network mapping is unavailable"
+            )
+        # Edges for a teammate-supplied SUMO network are verified against the live
+        # network by the adapter, which is the only component that may read it.

@@ -1,7 +1,7 @@
 """Synchronous simulator contract isolated from async API and persistence code."""
 
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from app.schemas.simulation import SimulationMetrics, SimulationScenario
 
@@ -15,7 +15,15 @@ class EmergencyVehicleState:
     distances_to_signals_meters: dict[str, float] = field(default_factory=dict)
 
 
+@runtime_checkable
 class SimulationAdapter(Protocol):
+    """Synchronous simulator contract.
+
+    Implementations are replaceable and must not assume a particular simulator.
+    Instances are single-use: ``start()`` prepares a run and ``close()`` releases
+    every resource the adapter acquired, including on failure.
+    """
+
     name: str
 
     def start(self, scenario: SimulationScenario) -> None: ...
@@ -35,6 +43,16 @@ class SimulationAdapter(Protocol):
     def get_metrics(self, vehicle_id: str) -> SimulationMetrics: ...
 
     def close(self) -> None: ...
+
+
+def adapter_metadata(adapter: object) -> dict[str, Any]:
+    """Read optional adapter provenance without assuming a specific attribute.
+
+    Adapters expose a public ``metadata`` mapping; anything else is reported as
+    empty rather than leaking internal state into a persisted run.
+    """
+    value = getattr(adapter, "metadata", None)
+    return dict(value) if isinstance(value, dict) else {}
 
 
 class SimulationAdapterError(RuntimeError):
@@ -65,3 +83,11 @@ class SimulationTimeoutError(SimulationAdapterError):
 
 class SimulationTerminatedError(SimulationAdapterError):
     code = "SIMULATION_TERMINATED"
+
+
+class SimulationStepError(SimulationAdapterError):
+    code = "SIMULATION_STEP_FAILED"
+
+
+class SimulationConfigurationError(SimulationAdapterError):
+    code = "SIMULATION_CONFIGURATION_INVALID"

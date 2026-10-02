@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.models.enums import SimulationStatus
 
@@ -21,6 +21,10 @@ class SafetyDecision(str, Enum):
 
 
 class SignalAction(BaseModel):
+    """A requested simulated signal phase change inside the digital twin only."""
+
+    model_config = ConfigDict(extra="forbid")
+
     signal_id: str = Field(min_length=1, max_length=120)
     traffic_signal_id: UUID
     requested_phase: str = Field(min_length=1, max_length=80)
@@ -31,6 +35,10 @@ class SignalAction(BaseModel):
 
 
 class SignalDefinition(BaseModel):
+    """Explicitly supplied simulator signal metadata; never inferred from geometry."""
+
+    model_config = ConfigDict(extra="forbid")
+
     traffic_signal_id: UUID
     signal_id: str = Field(min_length=1, max_length=120)
     edge_id: str = Field(min_length=1, max_length=120)
@@ -41,8 +49,38 @@ class SignalDefinition(BaseModel):
     maximum_duration_seconds: int = Field(ge=1, le=300)
     initial_phase: str
 
+    @model_validator(mode="after")
+    def phases_are_internally_consistent(self) -> "SignalDefinition":
+        if len(set(self.valid_phases)) != len(self.valid_phases):
+            raise ValueError("valid_phases must not contain duplicates")
+        known = set(self.valid_phases)
+        for name, phase in (
+            ("initial_phase", self.initial_phase),
+            ("preemption_phase", self.preemption_phase),
+            ("release_phase", self.release_phase),
+        ):
+            if phase not in known:
+                raise ValueError(f"{name} must be one of valid_phases")
+        if self.preemption_phase == self.release_phase:
+            raise ValueError("preemption_phase and release_phase must differ")
+        if not self.safe_transitions.get(self.initial_phase):
+            raise ValueError(
+                "safe_transitions must define at least one permitted transition "
+                "out of initial_phase"
+            )
+        for source, targets in self.safe_transitions.items():
+            if source not in known:
+                raise ValueError(f"safe_transitions references unknown phase {source!r}")
+            if any(target not in known for target in targets):
+                raise ValueError("safe_transitions references an unknown target phase")
+        if self.release_phase not in self.safe_transitions.get(self.preemption_phase, []):
+            raise ValueError("safe_transitions must permit preemption_phase -> release_phase")
+        return self
+
 
 class TrafficFlow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     demand_id: str = Field(min_length=1, max_length=120)
     edge_ids: list[str] = Field(min_length=1, max_length=500)
     vehicle_count: int = Field(ge=0, le=1000)
@@ -130,6 +168,7 @@ class SimulationRunRead(BaseModel):
     started_at: datetime | None
     completed_at: datetime | None
     created_at: datetime
+    simulation_only: bool = True
     error_code: str | None = None
     error_message: str | None = None
 

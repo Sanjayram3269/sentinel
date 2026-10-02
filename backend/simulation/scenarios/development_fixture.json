@@ -1,6 +1,8 @@
 {
   "label": "DEVELOPMENT / TEST NETWORK ONLY; synthetic edges, not real geography",
+  "model": "Declared synthetic replay trace. The fixture does not model how traffic responds to signal control, so BASELINE and CLEARPATH measure the same values. Not traffic physics and not a performance claim.",
   "network_id": "sentinel-development-test-network",
+  "departure_step": 0,
   "edge_ids": ["dev-edge-0", "dev-edge-1"],
   "signals": [
     {
@@ -16,64 +18,28 @@
   ],
   "steps": [
     {
-      "emergency_vehicle": {
-        "edge_id": "dev-edge-0",
-        "speed_meters_per_second": 5.0,
-        "arrived": false,
-        "waiting": false,
-        "distances_to_signals_meters": {"dev-tls-1": 120.0}
-      }
+      "edge_id": "dev-edge-0",
+      "speed_meters_per_second": 5.0,
+      "arrived": false,
+      "distances_to_signals_meters": {"dev-tls-1": 120.0}
     },
     {
-      "emergency_vehicle": {
-        "edge_id": "dev-edge-0",
-        "speed_meters_per_second": 0.0,
-        "arrived": false,
-        "waiting": true,
-        "distances_to_signals_meters": {"dev-tls-1": 10.0}
-      }
+      "edge_id": "dev-edge-0",
+      "speed_meters_per_second": 0.0,
+      "arrived": false,
+      "distances_to_signals_meters": {"dev-tls-1": 10.0}
     },
     {
-      "emergency_vehicle": {
-        "edge_id": "dev-edge-1",
-        "speed_meters_per_second": 4.0,
-        "arrived": false,
-        "waiting": false,
-        "distances_to_signals_meters": {"dev-tls-1": -1.0}
-      }
+      "edge_id": "dev-edge-1",
+      "speed_meters_per_second": 4.0,
+      "arrived": false,
+      "distances_to_signals_meters": {"dev-tls-1": -1.0}
     },
     {
-      "emergency_vehicle": {
-        "edge_id": "dev-edge-1",
-        "speed_meters_per_second": 0.0,
-        "arrived": true,
-        "waiting": false,
-        "distances_to_signals_meters": {"dev-tls-1": -1.0}
-      }
+      "edge_id": "dev-edge-1",
+      "speed_meters_per_second": 0.0,
+      "arrived": true,
+      "distances_to_signals_meters": {"dev-tls-1": -1.0}
     }
-  ],
-  "metrics": {
-    "BASELINE": {
-      "emergency_vehicle_travel_time_seconds": 4,
-      "total_delay_seconds": 2,
-      "stopped_time_seconds": 1,
-      "number_of_stops": 1,
-      "average_speed_meters_per_second": 2.25,
-      "route_completed": true,
-      "simulation_duration_seconds": 4,
-      "background_average_delay_seconds": null,
-      "background_vehicle_throughput": null
-    },
-    "CLEARPATH": {
-      "emergency_vehicle_travel_time_seconds": 4,
-      "total_delay_seconds": 2,
-      "stopped_time_seconds": 1,
-      "number_of_stops": 1,
-      "average_speed_meters_per_second": 2.25,
-      "route_completed": true,
-      "simulation_duration_seconds": 4,
-      "background_average_delay_seconds": null,
-      "background_vehicle_throughput": null
-    }
-  }
+  ]
 }

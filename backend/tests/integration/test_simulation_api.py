@@ -2,19 +2,25 @@
 
 import asyncio
 import os
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from fastapi.testclient import TestClient
 from geoalchemy2 import WKTElement
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.main import app
 from app.models import Route, TrafficSignal
 from app.models.enums import RouteStatus
+from app.services.simulation.adapter import SimulationUnavailableError
 from app.services.simulation.fake_adapter import FakeSimulationAdapter
 
 pytestmark = pytest.mark.integration
+BACKEND_DIR = Path(__file__).resolve().parents[2]
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
 DEVELOPMENT_NETWORK_ID = "sentinel-development-test-network"
 SIGNAL_METADATA = {
@@ -27,6 +33,13 @@ SIGNAL_METADATA = {
     "safe_transitions": {"R": ["G"], "G": ["R"], "Y": ["R"]},
     "maximum_duration_seconds": 2,
 }
+
+
+@pytest.fixture(scope="module", autouse=True)
+def upgrade_test_database() -> None:
+    if not TEST_DATABASE_URL:
+        pytest.skip("set TEST_DATABASE_URL to run simulation integration tests")
+    command.upgrade(Config(str(BACKEND_DIR / "alembic.ini")), "head")
 
 
 def create_mission_and_route(
@@ -116,8 +129,13 @@ def test_baseline_clearpath_comparison_persistence_and_events() -> None:
         assert baseline_body["metadata"]["network_id"] == DEVELOPMENT_NETWORK_ID
         assert "TEST NETWORK ONLY" in baseline_body["metadata"]["fixture_label"]
         assert baseline_body["clearpath_actions"] == []
+        assert baseline_body["simulation_only"] is True
         assert baseline_body["metrics"]["route_completed"] is True
         assert baseline_body["metrics"]["emergency_vehicle_travel_time_seconds"] == 4
+        assert baseline_body["metrics"]["stopped_time_seconds"] == 1
+        assert baseline_body["metrics"]["number_of_stops"] == 1
+        # The development fixture has no SUMO time-loss model, so it stays null.
+        assert baseline_body["metrics"]["total_delay_seconds"] is None
         assert baseline_body["metrics"]["background_vehicle_throughput"] is None
 
         clearpath = client.post(
@@ -128,6 +146,9 @@ def test_baseline_clearpath_comparison_persistence_and_events() -> None:
         assert clearpath_body["mode"] == "CLEARPATH"
         assert clearpath_body["clearpath_actions"][0]["decision"] == "APPROVED"
         assert clearpath_body["clearpath_actions"][0]["released_at_seconds"] == 3
+        # The fixture does not model a traffic response, so both modes measure
+        # the same values; no improvement may be claimed from it.
+        assert clearpath_body["metrics"] == baseline_body["metrics"]
 
         captured_scenarios = []
         previous_factory = getattr(app.state, "simulation_adapter_factory", None)
@@ -155,6 +176,7 @@ def test_baseline_clearpath_comparison_persistence_and_events() -> None:
         assert comparison_body["comparison"]["travel_time_delta_seconds"] == 0
         assert comparison_body["comparison"]["travel_time_improvement_percent"] == 0
         assert comparison_body["comparison"]["stops_delta"] == 0
+        assert comparison_body["comparison"]["stopped_time_delta_seconds"] == 0
 
         fetched = client.get(
             f"/api/v1/missions/{mission_id}/simulations/{baseline_body['simulation_id']}"
@@ -243,11 +265,6 @@ def test_invalid_scenario_mapping_is_rejected_without_network_fabrication() -> N
         )
         assert wrong_owner.status_code == 409
 
-        import asyncio
-        from sqlalchemy import update
-        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-        from app.models import Route
-
         async def deactivate_route() -> None:
             engine = create_async_engine(TEST_DATABASE_URL, pool_pre_ping=True)
             factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -320,7 +337,7 @@ def test_failed_adapter_persists_failed_run_and_event() -> None:
         assert response.status_code == 201, response.text
         body = response.json()
         assert body["status"] == "FAILED"
-        assert body["error_code"] == "SIMULATION_FAILURE"
+        assert body["error_code"] == "SIMULATION_STEP_FAILED"
         events = client.get(
             f"/api/v1/missions/{mission_id}/events?event_type=SIMULATION_FAILED"
         )
@@ -335,16 +352,50 @@ def test_failed_adapter_persists_failed_run_and_event() -> None:
         assert len(failed_history.json()["items"]) == 1
 
 
-def test_safe_guard_rejects_phase_without_transition_metadata() -> None:
+def test_malformed_signal_metadata_is_rejected_before_any_simulation_runs() -> None:
     with TestClient(app) as client:
         mission_id, vehicle_id, route_id, signal_id = create_mission_and_route(
-            client, "Unsafe simulated phase"
+            client, "Malformed phase metadata"
         )
 
-        import asyncio
-        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-        from sqlalchemy import select
-        from app.models import TrafficSignal
+        async def break_metadata() -> None:
+            engine = create_async_engine(TEST_DATABASE_URL, pool_pre_ping=True)
+            factory = async_sessionmaker(engine, expire_on_commit=False)
+            try:
+                async with factory() as session:
+                    async with session.begin():
+                        signal = await session.scalar(
+                            select(TrafficSignal).where(TrafficSignal.id == UUID(signal_id))
+                        )
+                        assert signal is not None
+                        # A pre-emption that could never be released is malformed.
+                        signal.signal_metadata = {
+                            **SIGNAL_METADATA,
+                            "safe_transitions": {"R": ["G"], "G": ["Y"], "Y": ["R"]},
+                        }
+            finally:
+                await engine.dispose()
+
+        asyncio.run(break_metadata())
+        response = client.post(
+            f"/api/v1/missions/{mission_id}/simulations/clearpath",
+            json=request_payload(vehicle_id, route_id, signal_id),
+        )
+        # Malformed metadata never reaches the simulator: the scenario is refused
+        # at the boundary, so no SimulationRun row is created at all.
+        assert response.status_code == 422, response.text
+        assert "phase and transition metadata" in response.json()["detail"]
+        history = client.get(f"/api/v1/missions/{mission_id}/simulations")
+        assert history.status_code == 200
+        assert history.json()["items"] == []
+
+
+def test_runtime_guard_rejection_is_recorded_without_touching_the_signal() -> None:
+    """Structurally valid metadata can still be refused for the current phase."""
+    with TestClient(app) as client:
+        mission_id, vehicle_id, route_id, signal_id = create_mission_and_route(
+            client, "Runtime guard rejection"
+        )
 
         async def remove_safe_transition() -> None:
             engine = create_async_engine(TEST_DATABASE_URL, pool_pre_ping=True)
@@ -356,9 +407,11 @@ def test_safe_guard_rejects_phase_without_transition_metadata() -> None:
                             select(TrafficSignal).where(TrafficSignal.id == UUID(signal_id))
                         )
                         assert signal is not None
+                        # Valid metadata, but the current red phase has no
+                        # configured transition into the pre-emption green phase.
                         signal.signal_metadata = {
                             **SIGNAL_METADATA,
-                            "safe_transitions": {"R": [], "G": ["R"], "Y": ["R"]},
+                            "safe_transitions": {"R": ["Y"], "Y": ["R"], "G": ["R"]},
                         }
             finally:
                 await engine.dispose()
@@ -369,6 +422,67 @@ def test_safe_guard_rejects_phase_without_transition_metadata() -> None:
             json=request_payload(vehicle_id, route_id, signal_id),
         )
         assert response.status_code == 201, response.text
-        result = response.json()["clearpath_actions"][0]
-        assert result["decision"] == "REJECTED"
-        assert result["reason_code"] == "UNSAFE_PHASE_TRANSITION"
+        body = response.json()
+        assert body["status"] == "COMPLETED"
+        action = body["clearpath_actions"][0]
+        assert action["decision"] == "REJECTED"
+        assert action["reason_code"] == "UNSAFE_PHASE_TRANSITION"
+        assert action["released_at_seconds"] is None
+
+        events = client.get(
+            f"/api/v1/missions/{mission_id}/events?event_type=CLEARPATH_UPDATED"
+        )
+        assert events.status_code == 200
+        matching = [
+            event
+            for event in events.json()["items"]
+            if event["payload"].get("simulation_run_id") == body["simulation_id"]
+        ]
+        assert matching and matching[0]["correlation_id"] == body["correlation_id"]
+
+
+def test_failed_run_never_stays_running_and_carries_correlation() -> None:
+    with TestClient(app) as client:
+        mission_id, vehicle_id, route_id, signal_id = create_mission_and_route(
+            client, "Failed run terminal state"
+        )
+        previous = getattr(app.state, "simulation_adapter_factory", None)
+        app.state.simulation_adapter_factory = lambda scenario: _NeverStarts()
+        try:
+            response = client.post(
+                f"/api/v1/missions/{mission_id}/simulations/clearpath",
+                json=request_payload(vehicle_id, route_id, signal_id),
+            )
+        finally:
+            if previous is None:
+                delattr(app.state, "simulation_adapter_factory")
+            else:
+                app.state.simulation_adapter_factory = previous
+
+        assert response.status_code == 201, response.text
+        body = response.json()
+        assert body["status"] == "FAILED"
+        assert body["error_code"] == "SIMULATOR_UNAVAILABLE"
+        assert body["started_at"] is not None
+        assert body["completed_at"] is not None
+        assert body["simulation_only"] is True
+
+        running = client.get(
+            f"/api/v1/missions/{mission_id}/simulations?status=RUNNING"
+        )
+        assert running.json()["items"] == []
+        events = client.get(
+            f"/api/v1/missions/{mission_id}/events?event_type=SIMULATION_FAILED"
+        )
+        failed = [
+            event
+            for event in events.json()["items"]
+            if event["payload"].get("simulation_run_id") == body["simulation_id"]
+        ]
+        assert failed and failed[0]["correlation_id"] == body["correlation_id"]
+
+
+class _NeverStarts(FakeSimulationAdapter):
+    def start(self, scenario) -> None:  # noqa: ANN001 - test double
+        self.metadata = {"network_id": scenario.network_id}
+        raise SimulationUnavailableError("SUMO is not installed in this environment")

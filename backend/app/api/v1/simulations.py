@@ -22,6 +22,13 @@ router = APIRouter(prefix="/missions", tags=["simulations"])
 
 
 def _simulation_service(request: Request) -> SimulationService:
+    """Build the service for one request.
+
+    ``app.state.simulation_adapter_factory`` is an optional dependency-injection
+    seam: when set it replaces the default adapter selection so a deployment or
+    a test can supply another ``SimulationAdapter`` implementation. Routes never
+    construct a simulator or speak TraCI themselves.
+    """
     event_service = EventService(EventPublisher(request.app.state.redis))
     adapter_factory: AdapterFactory | None = getattr(
         request.app.state, "simulation_adapter_factory", None

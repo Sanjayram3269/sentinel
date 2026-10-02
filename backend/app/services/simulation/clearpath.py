@@ -1,16 +1,18 @@
 """Deterministic CLEARPATH strategy and digital-twin-only safety guard."""
 
 from dataclasses import dataclass
-from uuid import UUID
 
 from app.config import Settings, get_settings
 from app.schemas.simulation import (
     SafetyDecision,
     SignalAction,
     SignalActionResult,
+    SimulationMode,
     SimulationScenario,
 )
 from app.services.simulation.adapter import EmergencyVehicleState
+
+APPROVED_REASON_CODE = "APPROVED_SIMULATION_ONLY"
 
 
 @dataclass(frozen=True)
@@ -21,7 +23,12 @@ class SafetyVerdict:
 
 
 class ClearPathSafetyGuard:
-    """Validate every requested simulated signal phase transition."""
+    """Validate every requested simulated signal phase transition.
+
+    This guard exists to keep the digital twin internally consistent. It is not a
+    real-world traffic-signal safety certification and nothing here authorises
+    physical signal control.
+    """
 
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -32,6 +39,13 @@ class ClearPathSafetyGuard:
         scenario: SimulationScenario,
         current_phase: str | None,
     ) -> SafetyVerdict:
+        if scenario.mode is not SimulationMode.CLEARPATH:
+            return self._reject(
+                "MODE_NOT_CLEARPATH",
+                "Only a CLEARPATH simulation may request signal actions",
+            )
+        if action.activation_time_seconds < 0:
+            return self._reject("MALFORMED_ACTION", "Activation time must not be negative")
         signal = next(
             (
                 item
@@ -49,7 +63,7 @@ class ClearPathSafetyGuard:
             return self._reject("CURRENT_PHASE_UNKNOWN", "Current simulated signal phase is unknown or invalid")
         if action.requested_phase not in signal.valid_phases:
             return self._reject("INVALID_REQUESTED_PHASE", "Requested phase is not valid for this signal")
-        if action.requested_phase == signal.release_phase:
+        if action.requested_phase != signal.preemption_phase:
             return self._reject("NO_PREEMPTION_PHASE", "Requested phase does not enter the configured pre-emption phase")
         duration_cap = min(
             signal.maximum_duration_seconds,
@@ -64,7 +78,7 @@ class ClearPathSafetyGuard:
             return self._reject("UNSAFE_RELEASE_TRANSITION", "Configured metadata does not permit safe release")
         return SafetyVerdict(
             SafetyDecision.APPROVED,
-            "APPROVED_SIMULATION_ONLY",
+            APPROVED_REASON_CODE,
             "Transition is allowed by this simulation signal's configured phase metadata",
         )
 
@@ -74,7 +88,11 @@ class ClearPathSafetyGuard:
 
 
 class ClearPathStrategy:
-    """Request bounded pre-emption only for an approaching corridor signal."""
+    """Request bounded pre-emption only for an approaching corridor signal.
+
+    The strategy only produces proposals. It never writes a signal phase and it
+    never touches anything outside the configured simulation.
+    """
 
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -86,6 +104,8 @@ class ClearPathStrategy:
         current_time_seconds: int,
         already_requested: set[str],
     ) -> list[SignalAction]:
+        if scenario.mode is not SimulationMode.CLEARPATH or state.arrived:
+            return []
         actions = []
         for signal in scenario.traffic_signals:
             distance = state.distances_to_signals_meters.get(signal.signal_id)
