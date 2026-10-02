@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     app_env: str = "development"
     app_version: str = "0.1.0"
     database_url: str = (
-        "postgresql+asyncpg://sentinel:sentinel_dev_password@localhost:5432/sentinel"
+        "postgresql+asyncpg://sentinel:sentinel_dev_password@localhost:15432/sentinel"
     )
     redis_url: str = "redis://localhost:6379/0"
     debug: bool = False

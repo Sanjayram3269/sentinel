@@ -1,0 +1,103 @@
+"""Controlled vocabularies stored by the SENTINEL domain."""
+
+from enum import Enum
+
+
+class MissionStatus(str, Enum):
+    CREATED = "CREATED"
+    ACTIVE = "ACTIVE"
+    PAUSED = "PAUSED"
+    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
+
+
+class IncidentType(str, Enum):
+    MEDICAL = "MEDICAL"
+    FIRE = "FIRE"
+    ACCIDENT = "ACCIDENT"
+    FLOOD = "FLOOD"
+    EARTHQUAKE = "EARTHQUAKE"
+    CYCLONE = "CYCLONE"
+    HAZMAT = "HAZMAT"
+    OTHER = "OTHER"
+
+
+class VehicleType(str, Enum):
+    AMBULANCE = "AMBULANCE"
+    FIRE_TRUCK = "FIRE_TRUCK"
+    POLICE = "POLICE"
+    RESCUE = "RESCUE"
+    OTHER = "OTHER"
+
+
+class VehicleStatus(str, Enum):
+    AVAILABLE = "AVAILABLE"
+    EN_ROUTE = "EN_ROUTE"
+    AT_SCENE = "AT_SCENE"
+    TRANSPORTING = "TRANSPORTING"
+    OFFLINE = "OFFLINE"
+
+
+class RouteStatus(str, Enum):
+    ACTIVE = "ACTIVE"
+    BACKUP = "BACKUP"
+    CONTINGENCY = "CONTINGENCY"
+    BLOCKED = "BLOCKED"
+    REJECTED = "REJECTED"
+
+
+class ApprovalStatus(str, Enum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    MODIFIED = "MODIFIED"
+
+
+class HazardType(str, Enum):
+    FLOOD = "FLOOD"
+    FIRE = "FIRE"
+    EARTHQUAKE = "EARTHQUAKE"
+    CYCLONE = "CYCLONE"
+    ROAD_CLOSURE = "ROAD_CLOSURE"
+    ACCIDENT = "ACCIDENT"
+    OTHER = "OTHER"
+
+
+class HazardStatus(str, Enum):
+    ACTIVE = "ACTIVE"
+    RESOLVED = "RESOLVED"
+    EXPIRED = "EXPIRED"
+
+
+class PredictionType(str, Enum):
+    ETA = "ETA"
+    CONGESTION = "CONGESTION"
+    ROUTE_RISK = "ROUTE_RISK"
+    HAZARD_IMPACT = "HAZARD_IMPACT"
+    OTHER = "OTHER"
+
+
+class OperationalStatus(str, Enum):
+    OPERATIONAL = "OPERATIONAL"
+    LIMITED = "LIMITED"
+    CLOSED = "CLOSED"
+
+
+class PlanStatus(str, Enum):
+    DRAFT = "DRAFT"
+    SUBMITTED = "SUBMITTED"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    SUPERSEDED = "SUPERSEDED"
+
+
+class SimulationStatus(str, Enum):
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+
+def enum_values(enum_type: type[Enum]) -> list[str]:
+    """Return explicit values so PostgreSQL enum labels match the API contract."""
+    return [member.value for member in enum_type]

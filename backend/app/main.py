@@ -5,6 +5,7 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI
 
+from app.api.v1.router import router as api_v1_router
 from app.config import get_settings
 from app.db.session import engine
 from app.services.redis import create_redis_client
@@ -32,6 +33,7 @@ app = FastAPI(
     version=settings.app_version,
     lifespan=lifespan,
 )
+app.include_router(api_v1_router)
 
 
 @app.get("/", tags=["system"])

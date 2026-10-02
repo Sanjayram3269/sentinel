@@ -19,7 +19,14 @@ async_session_factory = async_sessionmaker(
 )
 
 
-async def get_db_session() -> AsyncIterator[AsyncSession]:
-    """Yield a database session and close it when the request is complete."""
+async def get_db() -> AsyncIterator[AsyncSession]:
+    """Yield a database session, rolling back failed requests and always closing."""
     async with async_session_factory() as session:
-        yield session
+        try:
+            yield session
+        except BaseException:
+            await session.rollback()
+            raise
+
+
+get_db_session = get_db
