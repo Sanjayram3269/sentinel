@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<additional>
+
+    <!-- SENTINEL emergency vehicle -->
+    <vType
+        id="SENTINEL_AMBULANCE"
+        vClass="emergency"
+        guiShape="emergency"
+        length="7.0"
+        width="2.5"
+        minGap="2.5"
+        accel="3.0"
+        decel="5.0"
+        maxSpeed="6.0"
+        sigma="0.2"
+        color="1,0,0,1"
+    />
+
+</additional>
