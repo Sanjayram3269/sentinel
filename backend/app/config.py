@@ -18,6 +18,21 @@ class Settings(BaseSettings):
     )
     redis_url: str = "redis://localhost:6379/0"
     debug: bool = False
+
+    # Explicit browser-origin allowlist. A wildcard is deliberately not
+    # supported: the event stream and mission APIs are not designed to be
+    # callable from an arbitrary page. Configure additional origins with
+    # CORS_ORIGINS as a JSON list, for example
+    # CORS_ORIGINS='["http://localhost:5173","http://127.0.0.1:5173"]'.
+    cors_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ]
+    )
+    # CORSMiddleware only negotiates preflight for ordinary HTTP requests.
+    # The mission event stream is a WebSocket upgrade and is not governed
+    # by this setting; serve the frontend through a proxy for that route.
     route_weight_eta: float = Field(default=0.25, ge=0, le=1)
     route_weight_distance: float = Field(default=0.15, ge=0, le=1)
     route_weight_risk: float = Field(default=0.15, ge=0, le=1)
