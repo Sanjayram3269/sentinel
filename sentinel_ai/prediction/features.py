@@ -1,9 +1,8 @@
 import networkx as nx
 import numpy as np
-import math
 from typing import List, Dict, Any, Tuple
 from sentinel_ai.contracts import WorldState
-from sentinel_ai.world.geometry import node_position
+from sentinel_ai.world.geometry import distance_m, node_position
 from sentinel_ai.world.simulator import get_base_capacity, get_edge_delay_s
 
 def compute_route_features(
@@ -59,20 +58,21 @@ def compute_route_features(
             volume = 500 * world_state.demand_level # Simplified for feature
             occupancies.append(min(1.0, volume / capacity))
 
-        # Incident distance. Positions come from the graph, so a real OSM
-        # network yields metres on the WGS84 axes rather than grid cells.
+        # Incident distance. Positions come from the graph and are compared in
+        # metres, so a real OSM network measures true geography rather than
+        # grid cells or raw degrees.
         ux, uy = node_position(G, u)
         vx, vy = node_position(G, v)
         mid_x, mid_y = (ux + vx) / 2.0, (uy + vy) / 2.0
 
         for inc in world_state.incidents:
             ix, iy = node_position(G, inc.node)
-            dist = math.hypot(mid_x - ix, mid_y - iy)
+            dist = distance_m(G, (mid_x, mid_y), (ix, iy))
             min_dist_incident = min(min_dist_incident, dist)
-
+            
         for haz in world_state.hazards:
             hx, hy = node_position(G, haz.center_node)
-            dist = math.hypot(mid_x - hx, mid_y - hy)
+            dist = distance_m(G, (mid_x, mid_y), (hx, hy))
             if dist < haz.radius_m:
                 hazard_overlap += length
 
@@ -84,6 +84,12 @@ def compute_route_features(
     features["num_signals"] = num_signals
     features["share_arterial"] = arterial_length / total_length if total_length > 0 else 0.0
     features["min_distance_incident"] = min_dist_incident if min_dist_incident != float('inf') else 10000.0
+    # `closed_edge_flag` and `hazard_overlap` were computed but never returned,
+    # so the route-failure baseline read a missing key and always defaulted to
+    # "not closed". They are now exposed. This adds keys only: the trained
+    # feature order in FEATURE_COLS is unchanged.
+    features["closed_edge_flag"] = closed_edge_flag
+    features["hazard_overlap"] = hazard_overlap
 
     hour = (depart_time_utc % 86400) / 3600.0
     features["time_of_day"] = hour

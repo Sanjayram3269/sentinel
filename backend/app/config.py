@@ -50,6 +50,19 @@ class Settings(BaseSettings):
     # Importing OSM data is an explicit operator action and is never
     # performed by application startup or by an Alembic migration.
     road_network_import_enabled: bool = False
+    # AI intelligence layer. Disabled by default: with no imported road network
+    # and no trained artifact the layer has nothing to add, and every prediction
+    # resolves to the deterministic predictors instead.
+    sentinel_ai_enabled: bool = False
+    # Absolute path to the directory holding the trained artifact
+    # (sentinel_models.pkl). A relative path is refused at load time, because an
+    # artifact resolved against the working directory would change meaning with
+    # the process launch directory. Unset or absent means deterministic
+    # baseline_fallback, which is the state of this repository.
+    ai_model_path: str | None = None
+    # Reported alongside AI predictions so a stored record can be traced to the
+    # artifact version that produced it.
+    ai_model_version: str = "none"
     sumo_binary: str = "sumo"
     sumo_config_path: str | None = None
     sumo_network_id: str | None = None

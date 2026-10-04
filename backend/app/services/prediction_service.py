@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Mission, Prediction
+from app.config import get_settings
 from app.models.enums import PredictionType as ModelPredictionType
 from app.schemas.events import EventCreate, EventType
 from app.schemas.predictions import (
@@ -57,6 +58,25 @@ class PredictionService:
     def with_publisher(cls, publisher: EventPublisher) -> "PredictionService":
         return cls(EventService(publisher))
 
+    @staticmethod
+    def _ai_predictor(db: AsyncSession, prediction_type: PredictionKind):
+        """Return the AI adapter for ``prediction_type``, or ``None``.
+
+        Constructed per prediction so it carries the request's session. The
+        adapter binds one prediction kind at construction, which is what keeps
+        its ``predict`` signature identical to the ``Predictor`` protocol's. The
+        expensive part -- loading the imported road network -- is cached per
+        process by :mod:`app.services.ai_road_graph`, not rebuilt here.
+        """
+        settings = get_settings()
+        if not settings.sentinel_ai_enabled:
+            return None
+        from app.services.ai_predictor import AI_SUPPORTED_TYPES, AiPredictor
+
+        if prediction_type not in AI_SUPPORTED_TYPES:
+            return None
+        return AiPredictor(db, settings.road_network_key, prediction_type)
+
     async def run_prediction(
         self,
         db: AsyncSession,
@@ -67,7 +87,14 @@ class PredictionService:
         horizon_seconds: int = 300,
     ) -> PredictionRead:
         context = await build_prediction_context(db, mission_id)
-        result = predictor_for(prediction_type).predict(context, horizon_seconds)
+        ai_predictor = self._ai_predictor(db, prediction_type)
+        predictor = predictor_for(prediction_type, ai=ai_predictor)
+        if ai_predictor is not None:
+            # The AI adapter is the only async predictor; it obeys the same
+            # ``predict(context, horizon_seconds)`` contract as every other.
+            result = await predictor.predict(context, horizon_seconds)
+        else:
+            result = predictor.predict(context, horizon_seconds)
         record = self._record(mission_id, correlation_id or uuid4(), result)
         event_payload = EventCreate(
             event_type=EventType.PREDICTION_UPDATED,

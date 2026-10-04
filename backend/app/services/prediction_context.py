@@ -4,11 +4,13 @@ from uuid import UUID
 
 from geoalchemy2 import Geography
 from fastapi import HTTPException
-from sqlalchemy import cast, func, select
+from sqlalchemy import and_, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Event, Hazard, Mission, Route, Vehicle, VehicleTelemetry
 from app.models.enums import HazardStatus, RouteStatus
+from app.models.road import RoadEdge, RoadNetwork
+from app.config import get_settings
 from app.services.predictors import (
     EventFeature,
     HazardFeature,
@@ -20,6 +22,106 @@ from app.services.predictors import (
 MAX_CONTEXT_ROUTES = 200
 MAX_CONTEXT_HAZARDS = 200
 MAX_RECENT_EVENTS = 20
+#: Upper bound on road edges matched to one route, so a pathological geometry
+#: cannot make a single prediction unbounded.
+MAX_ROUTE_ROAD_EDGES = 400
+#: Search radius, in metres, when snapping a route to the nearest road edge.
+ROAD_MATCH_TOLERANCE_METERS = 50.0
+
+
+async def _failed_route_ids(db: AsyncSession, mission_id: UUID) -> set[UUID]:
+    """Routes recorded as failed or aborted on this mission."""
+    rows = await db.execute(
+        select(Route.id).where(
+            Route.mission_id == mission_id,
+            Route.status.in_([RouteStatus.FAILED, RouteStatus.ABORTED]),
+        )
+    )
+    return {row.id for row in rows.all()}
+
+
+async def _match_routes_to_road_edges(
+    db: AsyncSession, route_ids: list[UUID], network_key: str
+) -> dict[UUID, tuple[str, ...]]:
+    """Match each route's real WGS84 geometry to ordered road-network edges.
+
+    This is a spatial join, not a coordinate guess: the route geometry is
+    compared against stored road geometry in PostGIS and the matching edges are
+    ordered by where they sit along the route. A route that shares no road with
+    the imported network simply returns no edges, which the AI adapter reports
+    as a missing input rather than substituting something else.
+    """
+    if not route_ids:
+        return {}
+
+    # Fraction of the route length at which each road edge is first reached.
+    reach = func.ST_LineLocatePoint(
+        Route.geometry, func.ST_LineInterpolatePoint(RoadEdge.geometry, 0.5)
+    )
+    # Treat a near miss as a match: stored routes are a discretised trace and
+    # rarely coincide exactly with individual OSM edges.
+    matches = func.ST_DWithin(
+        cast(Route.geometry, Geography(srid=4326)),
+        cast(RoadEdge.geometry, Geography(srid=4326)),
+        ROAD_MATCH_TOLERANCE_METERS,
+    )
+    # Selecting the network id as a scalar subquery keeps Route as the single
+    # left-hand FROM; joining RoadNetwork directly would leave two unrelated
+    # FROMs for SQLAlchemy to disambiguate.
+    network_ids = (
+        select(RoadNetwork.id)
+        .where(RoadNetwork.network_key == network_key)
+        .scalar_subquery()
+    )
+    rows = (
+        await db.execute(
+            select(
+                Route.id.label("route_id"),
+                RoadEdge.from_node,
+                RoadEdge.to_node,
+                reach.label("reach"),
+            )
+            .select_from(Route)
+            .join(RoadEdge, and_(RoadEdge.network_id == network_ids, matches))
+            .where(Route.id.in_(route_ids))
+            .order_by(Route.id, reach, RoadEdge.external_id)
+        )
+    ).all()
+
+    grouped: dict[UUID, list[tuple[float, str]]] = {}
+    for row in rows:
+        bucket = grouped.setdefault(row.route_id, [])
+        if len(bucket) >= MAX_ROUTE_ROAD_EDGES:
+            continue
+        bucket.append((float(row.reach or 0.0), f"{row.from_node}->{row.to_node}"))
+
+    return {
+        route_id: tuple(edge_id for _reach, edge_id in bucket)
+        for route_id, bucket in grouped.items()
+    }
+
+
+async def _nearest_road_node(
+    db: AsyncSession, hazard_id: UUID, network_key: str
+) -> str | None:
+    """Nearest road-graph node to a hazard's real geometry."""
+    row = (
+        await db.execute(
+            select(RoadEdge.from_node)
+            .join(RoadNetwork, RoadNetwork.network_key == network_key)
+            .where(
+                RoadEdge.network_id == RoadNetwork.id,
+                func.ST_DWithin(
+                    cast(Hazard.geometry, Geography(srid=4326)),
+                    cast(RoadEdge.geometry, Geography(srid=4326)),
+                    ROAD_MATCH_TOLERANCE_METERS,
+                ),
+            )
+            .order_by(RoadEdge.external_id)
+            .limit(1)
+        )
+    ).first()
+    return row[0] if row is not None else None
 
 
 async def build_prediction_context(
@@ -46,6 +148,12 @@ async def build_prediction_context(
             .limit(MAX_CONTEXT_ROUTES)
         )
     ).all()
+
+    network_key = get_settings().road_network_key
+    road_edges_by_route = await _match_routes_to_road_edges(
+        db, [row.id for row in route_rows], network_key
+    )
+    closed_ids = await _failed_route_ids(db, mission_id)
     routes = tuple(
         RouteFeature(
             id=row.id,
@@ -53,6 +161,8 @@ async def build_prediction_context(
             distance_meters=row.distance_meters,
             estimated_duration_seconds=row.estimated_duration_seconds,
             risk_score=row.risk_score,
+            road_edge_ids=road_edges_by_route.get(row.id, ()),
+            closed=row.id in closed_ids,
         )
         for row in route_rows
     )
@@ -122,12 +232,20 @@ async def build_prediction_context(
         ).all()
         hazard_distances = {row.id: float(row.distance_meters) for row in rows}
 
+    hazard_nodes: dict[UUID, str | None] = {}
+    if hazard_rows:
+        for hazard in hazard_rows:
+            hazard_nodes[hazard.id] = await _nearest_road_node(
+                db, hazard.id, network_key
+            )
+
     hazards = tuple(
         HazardFeature(
             id=row.id,
             hazard_type=row.hazard_type.value,
             severity=row.severity,
             distance_meters=hazard_distances.get(row.id),
+            road_node_id=hazard_nodes.get(row.id),
         )
         for row in hazard_rows
     )

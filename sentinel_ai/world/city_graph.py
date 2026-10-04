@@ -3,6 +3,8 @@ import numpy as np
 import random
 from typing import Any, Iterable, Tuple
 
+from sentinel_ai.world.geometry import PLANAR_CRS, WGS84_CRS
+
 #: Spacing of the synthetic grid, in metres. Synthetic world only.
 GRID_SPACING_M = 200
 
@@ -64,6 +66,8 @@ def build_city_graph(seed: int = 42) -> nx.DiGraph:
         G.nodes[node]["x"] = float(grid_x * GRID_SPACING_M)
         G.nodes[node]["y"] = float(grid_y * GRID_SPACING_M)
 
+    # Declared so distance helpers know these are planar metres, not degrees.
+    G.graph["crs"] = PLANAR_CRS
     return G
 
 
@@ -82,6 +86,10 @@ def build_graph_from_road_edges(edges: Iterable[Any]) -> "nx.DiGraph":
     ``app.services.road_graph.RoadGraphEdge`` satisfies that shape.
     """
     graph = nx.DiGraph()
+    # Imported road networks carry WGS84 degrees, and the frame is declared so
+    # distance helpers convert to metres instead of comparing degrees against
+    # metre thresholds.
+    graph.graph["crs"] = WGS84_CRS
     for edge in edges:
         graph.add_node(
             edge.from_node, x=float(edge.start_lon), y=float(edge.start_lat)

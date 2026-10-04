@@ -1,9 +1,8 @@
-import math
 import numpy as np
 import networkx as nx
 from typing import List, Dict, Any, Tuple
 from sentinel_ai.contracts import WorldState
-from sentinel_ai.world.geometry import node_position
+from sentinel_ai.world.geometry import distance_m, node_position
 
 # BPR function parameters
 BPR_ALPHA = 0.15
@@ -64,9 +63,9 @@ def get_edge_delay_s(
         ux, uy = node_position(G, u)
         vx, vy = node_position(G, v)
 
-        # distance from edge midpoint to hazard center
+        # distance from edge midpoint to hazard center, in metres
         mid_x, mid_y = (ux + vx) / 2.0, (uy + vy) / 2.0
-        dist = math.hypot(mid_x - hx, mid_y - hy)
+        dist = distance_m(G, (mid_x, mid_y), (hx, hy))
 
         # Hazard radius at current_time
         time_elapsed = current_time - world_state.timestamp_utc
