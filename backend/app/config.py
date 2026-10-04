@@ -43,6 +43,13 @@ class Settings(BaseSettings):
     route_hazard_threshold: float = Field(default=0.80, ge=0, le=1)
     route_deviation_threshold_meters: float = Field(default=100, gt=0)
     route_min_diversity: float = Field(default=0.30, ge=0, le=1)
+    # Road network reference data. The key selects which imported network
+    # routing and resilience use; no network is created at startup and an
+    # absent network leaves the existing development behaviour untouched.
+    road_network_key: str = "osm_urban_v1"
+    # Importing OSM data is an explicit operator action and is never
+    # performed by application startup or by an Alembic migration.
+    road_network_import_enabled: bool = False
     sumo_binary: str = "sumo"
     sumo_config_path: str | None = None
     sumo_network_id: str | None = None

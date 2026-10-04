@@ -218,6 +218,75 @@ candidate risks are restored to the old non-null contract using conservative
 PostgreSQL enum labels cannot be removed directly, so the Task 5 labels remain
 unused after downgrade.
 
+## Road Network Reference Data
+
+Migration `0005_road_network` adds two reference-data tables that hold a real
+street network: `road_networks` (one row per imported network, keyed by a stable
+`network_key`) and `road_edges` (one row per drivable edge). They are shared,
+mission-independent reference data, so they carry no mission foreign key and are
+never cascaded from operational state. Geometry is PostGIS `LINESTRING` in
+SRID 4326 with a GiST index.
+
+Identity is layered. `RoadEdge.id` is the canonical SENTINEL UUID,
+`RoadEdge.external_id` is the SUMO edge identifier and is unique only within a
+network (`netconvert` renumbers the fragments it creates at junctions), and
+`RoadEdge.osm_way_id` is provenance only — one OSM way can become dozens of
+edges.
+
+`0005` creates **empty tables only**. OSM data is never inserted by a migration.
+After `alembic upgrade head`, an operator imports a SUMO network explicitly:
+
+```sh
+cd backend
+python scripts/import_road_network.py \
+  --net simulation/networks/osm_urban_v1/osm.net.xml \
+  --network-key osm_urban_v1
+```
+
+The importer reads the network's own `projParameter`, `netOffset` and
+`origBoundary` instead of assuming a projection, and converts edge shapes
+forward from projected metres to WGS84. It imports only drivable edges:
+internal junction edges (identifiers beginning `:`) are simulator bookkeeping,
+and `railway`, `footway`, `cycleway`, `steps` and `pedestrian` classes are
+excluded so a rail line beside a signalised junction is never treated as a
+signalised approach. Re-running is safe: existing edges for the key are deleted
+and rewritten in the same transaction. `--verify` reports stored counts without
+writing. Import is never triggered by application startup;
+`ROAD_NETWORK_IMPORT_ENABLED` records that intent and defaults to `false`.
+
+The reference network is `osm_urban_v1`, a Bengaluru OSM extract staged at
+`simulation/networks/osm_urban_v1/osm.net.xml`. That file is derived data and is
+git-ignored; see
+[`simulation/scenarios/osm_urban/`](simulation/scenarios/osm_urban/) for the
+netconvert invocation and scenario metadata. Importing it yields 712 drivable
+edges from 208 distinct OSM ways.
+
+`sentinel_ai` consumes the same graph. `app/services/road_graph.py` builds a
+`networkx.DiGraph` whose nodes carry `x`/`y` in WGS84 and whose edges carry the
+five attributes the AI feature extractor requires — `length_m`,
+`speed_limit_kmh`, `road_class`, `lanes`, `has_signal` — plus `road_edge_id`
+and `external_id`. Node positions come from PostGIS; the synthetic 200 m grid is
+confined to the synthetic world builder and is never substituted for a real
+graph, so a missing coordinate raises instead of silently inventing one. The
+backend constructs the graph and passes it in; `sentinel_ai` has no dependency
+on FastAPI.
+
+The network is exposed read-only:
+
+- `GET /api/v1/road-networks/{network_key}` returns the network summary
+- `GET /api/v1/road-networks/{network_key}/edges` returns a GeoJSON
+  `FeatureCollection` of `LineString` features with `road_edge_id`,
+  `external_id`, `road_class`, `speed_limit_kmh`, `lanes` and `has_signal`
+
+`ROAD_NETWORK_KEY` selects which imported network routing and resilience use. An
+absent network leaves existing development behaviour untouched.
+
+Known data anomalies, documented rather than silently smoothed: eleven node
+pairs carry parallel edges that `networkx.DiGraph` collapses to one, so the
+graph has 701 edges against 712 imported rows; and `road_class` stores the OSM
+class string (`highway.primary`, …), so the AI's arterial share is `0.0` and
+every class currently takes the default capacity branch.
+
 ## SUMO Digital Twin And CLEARPATH
 
 Task 6 simulation is explicitly **digital-twin-only**. CLEARPATH signal actions
@@ -381,10 +450,11 @@ rather than passing with no signals.
 ## Scope
 
 The backend currently covers domain persistence, event/telemetry streams,
-deterministic prediction baselines, prototype route resilience, and simulation-
-only SUMO/CLEARPATH integration. Trained ML models, real-world traffic signal
-control, resource allocation, human approval, autonomous actions, and workflow
-orchestration remain out of scope.
+deterministic prediction baselines, prototype route resilience, imported road
+network reference data with a NetworkX graph bridge, and simulation-only
+SUMO/CLEARPATH integration. AI route prediction, trained ML models, real-world
+traffic signal control, resource allocation, human approval, autonomous
+actions, and workflow orchestration remain out of scope.
 
 > SENTINEL CLEARPATH currently operates only inside the SUMO digital traffic
 > twin. It does not directly control real-world traffic infrastructure.

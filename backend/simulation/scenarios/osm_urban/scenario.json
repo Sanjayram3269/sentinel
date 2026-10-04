@@ -1,0 +1,37 @@
+{
+  "_comment": [
+    "Metadata for the imported Bengaluru OSM street network (network_key osm_urban_v1).",
+    "This directory is reference data only. No simulation adapter is bound to it:",
+    "SimulationRunner, SumoTraCIAdapter and ClearPathSafetyGuard remain authoritative",
+    "on clearpath_demo, which is untouched. Phase 3 imports geometry for routing and",
+    "resilience scoring; wiring this network into SUMO is a later phase.",
+    "The .net.xml itself is not committed. It is ~2 MB of derived data, is ignored by",
+    ".gitignore, and is regenerated deterministically with the netconvert command in",
+    "README.md next to this file, then imported with scripts/import_road_network.py."
+  ],
+  "scenario_id": "osm_urban",
+  "network_key": "osm_urban_v1",
+  "road_network_key": "osm_urban_v1",
+  "source": "sumo_netconvert",
+  "simulator_bound": false,
+  "net_path": "simulation/networks/osm_urban_v1/osm.net.xml",
+  "projection": {
+    "proj_parameter": "+proj=utm +zone=43 +ellps=WGS84 +datum=WGS84 +units=m +no_defs",
+    "net_offset": "-779395.62,-1448548.48",
+    "orig_boundary": "77.576713,13.090155,77.600090,13.111166",
+    "stored_geometry_srid": 4326
+  },
+  "expected_counts": {
+    "netconvert_edges_total": 807,
+    "drivable_edges_imported": 712,
+    "distinct_osm_way_ids": 208,
+    "signalised_edges": 4
+  },
+  "notes": [
+    "expected_counts describe the reference import of the staged network. The parse",
+    "layer of tests/integration/test_road_network_import.py asserts the invariants",
+    "(no internal edges, no non-drivable classes, provenance, geometry inside the",
+    "declared boundary) rather than these absolute numbers, so they stay correct if",
+    "the OSM extract is refreshed."
+  ]
+}

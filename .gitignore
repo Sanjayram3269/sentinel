@@ -55,6 +55,13 @@ simulation/output/
 **/simulation/output/
 simulation/runs/
 **/simulation/runs/
+# Regenerated SUMO networks are derived data. Scenario metadata (sumocfg,
+# signals.json) is committed next to them under simulation/scenarios/, but the
+# .net.xml itself is rebuilt from OSM by scripts/import_road_network.py and the
+# documented netconvert invocation, never committed.
+simulation/networks/
+**/simulation/networks/
+*.net.xml
 # SUMO writes tripinfos.xml, stats.xml and edgeData.xml with no infix, so the
 # dotted forms alone do not match the files that were actually committed on
 # simulation-lavanya. Both spellings are listed on purpose.
