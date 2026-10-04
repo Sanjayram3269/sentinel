@@ -43,6 +43,17 @@ class Settings(BaseSettings):
     route_hazard_threshold: float = Field(default=0.80, ge=0, le=1)
     route_deviation_threshold_meters: float = Field(default=100, gt=0)
     route_min_diversity: float = Field(default=0.30, ge=0, le=1)
+    # Real road-graph routing (Phase 5). A coordinate further than this from the
+    # nearest road node is refused rather than snapped.
+    route_max_snap_meters: float = Field(default=250.0, gt=0)
+    # Upper bound on generated candidates, including the shortest path.
+    route_max_candidates: int = Field(default=4, ge=1, le=20)
+    # Cost multiplier applied to already-used edges when generating an
+    # alternative route, so alternatives leave the primary's streets.
+    route_alternative_penalty: float = Field(default=2.0, ge=1.0)
+    # MINIMIZE_TRAVEL_TIME uses stored length_m / speed_limit_kmh;
+    # MINIMIZE_DISTANCE uses stored length_m only.
+    route_objective: str = Field(default="MINIMIZE_TRAVEL_TIME")
     # Road network reference data. The key selects which imported network
     # routing and resilience use; no network is created at startup and an
     # absent network leaves the existing development behaviour untouched.

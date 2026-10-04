@@ -105,6 +105,8 @@ def build_graph_from_road_edges(edges: Iterable[Any]) -> "nx.DiGraph":
             has_signal=bool(edge.has_signal),
             road_edge_id=str(getattr(edge, "road_edge_id", "")),
             external_id=str(getattr(edge, "external_id", "")),
+            # Stored street shape as (lon, lat) pairs, for route geometry.
+            coords=tuple(tuple(float(c) for c in pair) for pair in getattr(edge, "coords", ())),
         )
     return graph
 

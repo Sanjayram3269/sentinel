@@ -7,7 +7,15 @@ from fastapi import HTTPException
 from sqlalchemy import and_, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Event, Hazard, Mission, Route, Vehicle, VehicleTelemetry
+from app.models import (
+    Event,
+    Hazard,
+    Mission,
+    Route,
+    RouteCandidate,
+    Vehicle,
+    VehicleTelemetry,
+)
 from app.models.enums import HazardStatus, RouteStatus
 from app.models.road import RoadEdge, RoadNetwork
 from app.config import get_settings
@@ -27,6 +35,61 @@ MAX_RECENT_EVENTS = 20
 MAX_ROUTE_ROAD_EDGES = 400
 #: Search radius, in metres, when snapping a route to the nearest road edge.
 ROAD_MATCH_TOLERANCE_METERS = 50.0
+
+
+async def _canonical_road_edge_keys(
+    db: AsyncSession, route_ids: list[UUID]
+) -> dict[UUID, tuple[str, ...]]:
+    """Resolve each route's stored canonical ``RoadEdge.id`` list.
+
+    Routes generated from the road network already know exactly which edges they
+    traverse, so re-deriving that geometrically would be slower and less
+    accurate. The stored order is the travel order and is preserved. Only the
+    canonical id is translated into the facade's ``"u->v"`` graph key; the SUMO
+    ``external_id`` is never used here.
+    """
+    if not route_ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(
+                RouteCandidate.route_id,
+                RouteCandidate.road_segment_ids,
+            )
+            .where(RouteCandidate.route_id.in_(route_ids))
+            .order_by(RouteCandidate.created_at.desc(), RouteCandidate.id.desc())
+        )
+    ).all()
+
+    by_route: dict[UUID, list[str]] = {}
+    for row in rows:
+        if row.route_id is None or row.route_id in by_route:
+            continue
+        ids = [str(value) for value in (row.road_segment_ids or []) if value]
+        if ids:
+            by_route[row.route_id] = ids
+    if not by_route:
+        return {}
+
+    edge_rows = (
+        await db.execute(
+            select(RoadEdge.id, RoadEdge.from_node, RoadEdge.to_node).where(
+                RoadEdge.id.in_(
+                    [UUID(value) for ids in by_route.values() for value in ids]
+                )
+            )
+        )
+    ).all()
+    key_by_id = {
+        str(edge_id): f"{from_node}->{to_node}"
+        for edge_id, from_node, to_node in edge_rows
+    }
+    resolved: dict[UUID, tuple[str, ...]] = {}
+    for route_id, ids in by_route.items():
+        keys = tuple(key_by_id[value] for value in ids if value in key_by_id)
+        if keys:
+            resolved[route_id] = keys[:MAX_ROUTE_ROAD_EDGES]
+    return resolved
 
 
 async def _failed_route_ids(db: AsyncSession, mission_id: UUID) -> set[UUID]:
@@ -150,8 +213,13 @@ async def build_prediction_context(
     ).all()
 
     network_key = get_settings().road_network_key
-    road_edges_by_route = await _match_routes_to_road_edges(
-        db, [row.id for row in route_rows], network_key
+    route_ids = [row.id for row in route_rows]
+    # Canonical ids first; the geometric join is only the fallback for routes
+    # that were not generated from the network.
+    road_edges_by_route = await _canonical_road_edge_keys(db, route_ids)
+    unmatched = [route_id for route_id in route_ids if route_id not in road_edges_by_route]
+    road_edges_by_route.update(
+        await _match_routes_to_road_edges(db, unmatched, network_key)
     )
     closed_ids = await _failed_route_ids(db, mission_id)
     routes = tuple(

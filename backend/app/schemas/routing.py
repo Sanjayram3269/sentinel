@@ -37,7 +37,10 @@ class RouteCandidateRequest(BaseModel):
     vehicle_id: UUID
     origin: GeoPoint
     destination: GeoPoint
-    candidates: list[RouteProposal] = Field(min_length=1, max_length=50)
+    # Optional. When omitted or empty the routes are generated from the imported
+    # road network instead of being taken from the caller, which is the normal
+    # path now. Supplying candidates keeps the previous behaviour exactly.
+    candidates: list[RouteProposal] = Field(default_factory=list, max_length=50)
     routing_parameters: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -127,7 +130,12 @@ class ResilienceRead(BaseModel):
     resilience_level: ResilienceLevel
     resilience_score: float = Field(ge=0, le=1)
     route_diversity: float = Field(ge=0, le=1)
-    failure_exposure: float = Field(ge=0, le=1)
+    # Optional: the resilience engine reports None when no candidate carries a
+    # failure signal or a route risk. The engine has always been explicit about
+    # that case ("Failure exposure is unknown"), and the response schema has to
+    # be able to express it -- otherwise generating routes with no predicted
+    # risk at all cannot be serialised.
+    failure_exposure: float | None = Field(default=None, ge=0, le=1)
     primary_available: bool
     backup_available: bool
     contingency_available: bool

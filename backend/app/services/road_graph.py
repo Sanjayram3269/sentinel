@@ -20,6 +20,7 @@ route is the one that works without adding an undeclared package.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -27,6 +28,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import RoadEdge, RoadNetwork
+
+#: Stored edge shape, read as GeoJSON text and parsed into (lon, lat) pairs.
+_GEOMETRY_JSON = func.ST_AsGeoJSON(RoadEdge.geometry).label("geometry_json")
 
 #: Attribute names the AI library requires on every edge.
 REQUIRED_EDGE_ATTRIBUTES = (
@@ -60,6 +64,9 @@ class RoadGraphEdge:
     road_class: str
     lanes: int
     has_signal: bool
+    # Ordered WGS84 vertices of the stored geometry. Empty only for hand-built
+    # records in unit tests; imported networks always carry real shape.
+    coords: tuple[tuple[float, float], ...] = ()
 
 
 def _start_longitude() -> Any:
@@ -111,6 +118,7 @@ async def load_edges(
             RoadEdge.road_class,
             RoadEdge.lanes,
             RoadEdge.has_signal,
+            _GEOMETRY_JSON,
         )
         .where(RoadEdge.network_id == network.id)
         .order_by(RoadEdge.external_id)
@@ -132,9 +140,18 @@ async def load_edges(
             road_class=row.road_class,
             lanes=int(row.lanes),
             has_signal=bool(row.has_signal),
+            coords=_parse_coords(row.geometry_json),
         )
         for row in rows
     ]
+
+
+def _parse_coords(geometry_json: str | None) -> tuple[tuple[float, float], ...]:
+    """Read a stored LINESTRING into ordered (longitude, latitude) pairs."""
+    if not geometry_json:
+        return ()
+    coordinates = json.loads(geometry_json).get("coordinates") or []
+    return tuple((float(x), float(y)) for x, y in coordinates)
 
 
 def edge_attributes(edge: RoadGraphEdge) -> dict[str, Any]:
@@ -150,6 +167,8 @@ def edge_attributes(edge: RoadGraphEdge) -> dict[str, Any]:
         "road_edge_id": edge.road_edge_id,
         "external_id": edge.external_id,
         "osm_way_id": edge.osm_way_id,
+        # Real street shape for route generation, in WGS84 (lon, lat) order.
+        "coords": edge.coords,
     }
 
 

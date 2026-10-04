@@ -1,6 +1,7 @@
 """Candidate generation, scoring, persistence, activation, and retrieval."""
 
 import json
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
@@ -36,6 +37,10 @@ from app.services.route_scoring import (
     ScoredRoute,
 )
 from app.services.routing.base import RoutingProvider, RoutingRequest
+from app.services.routing.road_graph_provider import (
+    RouteSnappingError,
+    RoutingUnavailableError,
+)
 
 MAX_ROUTE_LIST_LIMIT = 200
 
@@ -64,6 +69,24 @@ class RouteService:
     ) -> RouteCandidateCollection:
         cycle_id = uuid4()
         correlation_id = uuid4()
+        # Real generation is the default when the caller supplies no geometry.
+        # Caller-supplied candidates keep the previous provider and behaviour.
+        provider = self.provider
+        if not payload.candidates:
+            from app.services.routing.road_graph_provider import (
+                RoadGraphRoutingProvider,
+            )
+
+            provider = RoadGraphRoutingProvider(self.settings)
+        prepare = getattr(provider, "prepare", None)
+        if prepare is not None:
+            try:
+                await prepare(db)
+            except (RoutingUnavailableError, RouteSnappingError) as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            # The graph stamp check opened an implicit transaction; close it so
+            # the explicit block below is the only one.
+            await db.commit()
         async with db.begin():
             mission = await db.get(Mission, mission_id)
             if mission is None:
@@ -89,7 +112,10 @@ class RouteService:
                 proposals=tuple(payload.candidates),
                 parameters=payload.routing_parameters,
             )
-            proposals = self.provider.calculate_routes(provider_request)
+            try:
+                proposals = provider.calculate_routes(provider_request)
+            except (RoutingUnavailableError, RouteSnappingError) as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
             if not proposals:
                 raise HTTPException(
                     status_code=422,
@@ -99,7 +125,22 @@ class RouteService:
             route_ids = [uuid4() for _ in proposals]
             for route_id, proposal in zip(route_ids, proposals, strict=True):
                 scored_inputs.append((route_id, proposal))
-            scored = self.scorer.score(scored_inputs)
+            signals = None
+            provenance = None
+            if hasattr(provider, "prediction_signals"):
+                signals = await provider.prediction_signals(
+                    db,
+                    mission_id,
+                    payload.vehicle_id,
+                    scored_inputs,
+                    provider.graph,
+                )
+                provenance = getattr(provider, "_provenance", None)
+            scored = self.scorer.score(scored_inputs, predictions=signals)
+            if provenance:
+                scored = [
+                    replace(item, provenance=provenance) for item in scored
+                ]
             resilience = assign_route_roles(
                 scored, minimum_diversity=self.settings.route_min_diversity
             )
@@ -151,7 +192,7 @@ class RouteService:
                     road_segment_ids=proposal.road_segment_ids,
                     backup_viable=item.viable,
                     rationale=self._rationale(item),
-                    provider=self.provider.name,
+                    provider=provider.name,
                 )
                 db.add(candidate)
                 candidate_by_route[item.candidate_id] = candidate
@@ -162,7 +203,7 @@ class RouteService:
                 EventCreate(
                     event_type=EventType.ROUTE_UPDATED,
                     timestamp=datetime.now(timezone.utc),
-                    source=self.provider.name,
+                    source=provider.name,
                     correlation_id=correlation_id,
                     payload={
                         "planning_cycle_id": str(cycle_id),
@@ -189,7 +230,7 @@ class RouteService:
             mission_id=mission_id,
             vehicle_id=payload.vehicle_id,
             planning_cycle_id=cycle_id,
-            provider=self.provider.name,
+            provider=provider.name,
             candidates=reads,
             resilience=self._resilience_read(
                 mission_id, payload.vehicle_id, cycle_id, resilience
@@ -460,7 +501,13 @@ class RouteService:
     def _rationale(item: ScoredRoute) -> str:
         if item.rejection_reasons:
             return "; ".join(item.rejection_reasons)
-        return f"baseline_routing_score_v1={item.score:.4f}; metric_coverage={item.score_coverage:.2f}"
+        base = (
+            f"baseline_routing_score_v1={item.score:.4f}; "
+            f"metric_coverage={item.score_coverage:.2f}"
+        )
+        if item.provenance:
+            return f"{base}; {item.provenance}"
+        return base
 
     @staticmethod
     def _candidate_read(
