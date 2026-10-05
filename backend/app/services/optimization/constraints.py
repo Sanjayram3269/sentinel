@@ -1,4 +1,4 @@
-"""Hard constraints for mission optimization.
+﻿"""Hard constraints for mission optimization.
 
 Every function in this module is a *filter*. It answers "can this option be
 used at all?" and nothing else: no weight, no normalisation, no ordering, no
@@ -71,6 +71,13 @@ def declared_capabilities(payload: Mapping[str, Any] | None) -> tuple[str, ...]:
             )
         elif isinstance(value, str) and value.strip():
             labels.add(value.strip().lower())
+
+    # Also support the existing JSONB convention where capabilities are
+    # declared directly as boolean keys, e.g. {"trauma": true}.
+    for key, value in payload.items():
+        if key.lower() not in CAPABILITY_KEYS and value is True:
+            labels.add(str(key).strip().lower())
+
     return tuple(sorted(labels))
 
 
@@ -341,3 +348,4 @@ class CandidatePool:
     hospital_rejections: dict[UUID, Verdict] = field(default_factory=dict)
     resource_rejections: dict[UUID, Verdict] = field(default_factory=dict)
     route_rejections: dict[UUID, Verdict] = field(default_factory=dict)
+

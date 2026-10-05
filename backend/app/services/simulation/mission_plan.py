@@ -1,4 +1,4 @@
-"""Mission-plan to CLEARPATH simulation bridge (Phase 7).
+﻿"""Mission-plan to CLEARPATH simulation bridge (Phase 7).
 
 This module is the seam between the Phase 6 decision layer and the existing
 digital twin. It **connects** them; it does not replace any part of either.
@@ -333,7 +333,26 @@ class MissionPlanSimulationService:
                 PlanSimulationCode.INVALID_ROUTE,
                 "Canonical route contains duplicate road edges",
             )
-        return canonical_ids, self.settings.road_network_key
+        # Resolve the simulation network from the canonical RoadEdge records
+        # selected by Phase 5. Never substitute a development/default network.
+        rows = (
+            await db.execute(
+                select(RoadEdge.id, RoadEdge.network_id, RoadNetwork.network_key)
+                .join(RoadNetwork, RoadNetwork.id == RoadEdge.network_id)
+                .where(
+                    RoadEdge.id.in_([UUID(str(item)) for item in canonical_ids]),
+                )
+            )
+        ).all()
+
+        network_keys = {str(row[2]) for row in rows}
+        if len(network_keys) != 1:
+            raise PlanSimulationError(
+                PlanSimulationCode.ROUTE_NETWORK_MISMATCH,
+                "Selected route edges do not belong to exactly one road network",
+            )
+
+        return canonical_ids, next(iter(network_keys))
 
     def _mission_of(self, db: AsyncSession, route_id: UUID):  # pragma: no cover
         raise NotImplementedError
@@ -346,7 +365,6 @@ class MissionPlanSimulationService:
                 select(RoadEdge.id, RoadEdge.external_id)
                 .join(RoadNetwork, RoadNetwork.id == RoadEdge.network_id)
                 .where(
-                    RoadNetwork.network_key == self.settings.road_network_key,
                     RoadEdge.id.in_([UUID(str(item)) for item in canonical_ids]),
                 )
             )
@@ -463,3 +481,4 @@ def _safety_status(approved: int, requested: int) -> SafetyStatus:
     if approved == 0:
         return SafetyStatus.REJECTED_SIMULATION_ONLY
     return SafetyStatus.APPROVED_SIMULATION_ONLY
+
