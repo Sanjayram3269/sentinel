@@ -8,6 +8,7 @@ from app.models.mission import Mission
 from app.models.plan import MissionPlan, PlanApproval
 from app.models.prediction import Prediction
 from app.models.resource import Hospital, Shelter, TrafficSignal
+from app.models.road import RoadEdge, RoadNetwork
 from app.models.route import Route, RouteCandidate
 from app.models.simulation import SimulationRun
 from app.models.vehicle import Vehicle, VehicleTelemetry
@@ -23,6 +24,8 @@ __all__ = [
 	"MissionPlan",
 	"PlanApproval",
 	"Prediction",
+	"RoadEdge",
+	"RoadNetwork",
 	"Route",
 	"RouteCandidate",
 	"Shelter",

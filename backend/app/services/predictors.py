@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from statistics import median
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 from uuid import UUID
 
 from app.schemas.predictions import (
@@ -24,6 +24,12 @@ class RouteFeature:
     distance_meters: float
     estimated_duration_seconds: int
     risk_score: float | None
+    # Real road-graph edges, ordered along the route, resolved from the route
+    # geometry against the imported network. Empty when the route could not be
+    # matched; the deterministic predictors ignore these and the AI adapter
+    # treats them as "cannot reason on the road graph".
+    road_edge_ids: tuple[str, ...] = ()
+    closed: bool = False
 
 
 @dataclass(frozen=True)
@@ -38,6 +44,9 @@ class HazardFeature:
     hazard_type: str
     severity: int
     distance_meters: float | None
+    # Nearest road-graph node, used by the AI adapter to place the hazard on the
+    # real network. ``None`` when no road network is imported.
+    road_node_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -57,7 +66,16 @@ class MissionPredictionContext:
     active_hazard_event_seen: bool = False
 
 
+@runtime_checkable
 class Predictor(Protocol):
+    """The one prediction entry point every engine must provide.
+
+    ``runtime_checkable`` lets tests assert that a concrete predictor -- the
+    deterministic ones below or the AI adapter -- satisfies this protocol,
+    including the exact ``predict(context, horizon_seconds)`` signature. The
+    protocol itself is unchanged.
+    """
+
     prediction_type: PredictionKind
 
     def predict(
@@ -503,7 +521,20 @@ class HazardImpactPredictor:
         )
 
 
-def predictor_for(prediction_type: PredictionKind) -> Predictor:
+def predictor_for(
+    prediction_type: PredictionKind, ai: Predictor | None = None
+) -> Predictor:
+    """Select the predictor for one prediction type.
+
+    ``ai`` is consulted first and is used only for the types it declares
+    support. ``CONGESTION`` and ``HAZARD_IMPACT`` deliberately have no AI
+    implementation, so those always resolve to the deterministic predictors
+    below. The adapter itself falls back to the same deterministic
+    implementations when AI cannot run, so a caller never has to know which
+    engine produced a result.
+    """
+    if ai is not None and getattr(ai, "supports", None) and ai.supports(prediction_type):
+        return ai
     predictors: dict[PredictionKind, Predictor] = {
         PredictionKind.ETA: EtaPredictor(),
         PredictionKind.ROUTE_FAILURE: RouteFailurePredictor(),

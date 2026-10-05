@@ -47,6 +47,9 @@ class ScoredRoute:
     rejection_reasons: tuple[str, ...]
     metrics: dict[str, float]
     provider_order: int = 0
+    # Where this candidate's signals came from (network key, AI source, whether
+    # the numbers are trained). Persisted in the candidate rationale.
+    provenance: str | None = None
 
 
 class RouteScoringEngine:

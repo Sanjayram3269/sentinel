@@ -29,9 +29,28 @@ def _migration(database_url: str, *arguments: str) -> subprocess.CompletedProces
     )
 
 
+def _head_revision() -> str:
+    """Return the single head revision this tree declares.
+
+    ``upgrade head`` must land on whatever the newest revision is, so the
+    expectation is derived instead of pinned to one revision. Pinning it meant
+    adding any later migration broke a test that is about migration safety, not
+    about which revision happens to be newest.
+    """
+    completed = _migration("", "heads")
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    revisions = [
+        line.split()[0] for line in completed.stdout.splitlines() if line.strip()
+    ]
+    assert len(revisions) == 1, f"expected one head, found {revisions}"
+    return revisions[0]
+
+
 def test_fresh_database_upgrade_downgrade_safety_and_reupgrade() -> None:
     if not TEST_DATABASE_URL:
         pytest.skip("set TEST_DATABASE_URL to run fresh database migration tests")
+
+    head_revision = _head_revision()
 
     source_url = make_url(TEST_DATABASE_URL)
     database_name = f"sentinel_task5_{uuid4().hex[:16]}"
@@ -166,7 +185,7 @@ def test_fresh_database_upgrade_downgrade_safety_and_reupgrade() -> None:
         )
         current = _migration(database_url, "current")
         assert current.returncode == 0
-        assert "0004_route_resilience" in current.stdout
+        assert head_revision in current.stdout
 
         connection = await asyncpg.connect(
             user=source_url.username,
@@ -195,7 +214,7 @@ def test_fresh_database_upgrade_downgrade_safety_and_reupgrade() -> None:
         assert fresh_upgrade.returncode == 0, fresh_upgrade.stdout + fresh_upgrade.stderr
         current = _migration(database_url, "current")
         assert current.returncode == 0
-        assert "0004_route_resilience" in current.stdout
+        assert head_revision in current.stdout
         parity = _migration(database_url, "check")
         assert parity.returncode == 0, parity.stdout + parity.stderr
 
@@ -212,7 +231,7 @@ def test_fresh_database_upgrade_downgrade_safety_and_reupgrade() -> None:
 
         current = _migration(database_url, "current")
         assert current.returncode == 0
-        assert "0004_route_resilience" in current.stdout
+        assert head_revision in current.stdout
         parity = _migration(database_url, "check")
         assert parity.returncode == 0, parity.stdout + parity.stderr
     finally:

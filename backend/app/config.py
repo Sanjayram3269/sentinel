@@ -18,6 +18,21 @@ class Settings(BaseSettings):
     )
     redis_url: str = "redis://localhost:6379/0"
     debug: bool = False
+
+    # Explicit browser-origin allowlist. A wildcard is deliberately not
+    # supported: the event stream and mission APIs are not designed to be
+    # callable from an arbitrary page. Configure additional origins with
+    # CORS_ORIGINS as a JSON list, for example
+    # CORS_ORIGINS='["http://localhost:5173","http://127.0.0.1:5173"]'.
+    cors_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ]
+    )
+    # CORSMiddleware only negotiates preflight for ordinary HTTP requests.
+    # The mission event stream is a WebSocket upgrade and is not governed
+    # by this setting; serve the frontend through a proxy for that route.
     route_weight_eta: float = Field(default=0.25, ge=0, le=1)
     route_weight_distance: float = Field(default=0.15, ge=0, le=1)
     route_weight_risk: float = Field(default=0.15, ge=0, le=1)
@@ -28,6 +43,58 @@ class Settings(BaseSettings):
     route_hazard_threshold: float = Field(default=0.80, ge=0, le=1)
     route_deviation_threshold_meters: float = Field(default=100, gt=0)
     route_min_diversity: float = Field(default=0.30, ge=0, le=1)
+    # Real road-graph routing (Phase 5). A coordinate further than this from the
+    # nearest road node is refused rather than snapped.
+    route_max_snap_meters: float = Field(default=250.0, gt=0)
+    # Upper bound on generated candidates, including the shortest path.
+    route_max_candidates: int = Field(default=4, ge=1, le=20)
+    # Cost multiplier applied to already-used edges when generating an
+    # alternative route, so alternatives leave the primary's streets.
+    route_alternative_penalty: float = Field(default=2.0, ge=1.0)
+    # MINIMIZE_TRAVEL_TIME uses stored length_m / speed_limit_kmh;
+    # MINIMIZE_DISTANCE uses stored length_m only.
+    route_objective: str = Field(default="MINIMIZE_TRAVEL_TIME")
+    # Road network reference data. The key selects which imported network
+    # routing and resilience use; no network is created at startup and an
+    # absent network leaves the existing development behaviour untouched.
+    road_network_key: str = "osm_urban_v1"
+    # Importing OSM data is an explicit operator action and is never
+    # performed by application startup or by an Alembic migration.
+    road_network_import_enabled: bool = False
+    # Mission optimization (Phase 6). The optimizer only ever *selects among*
+    # persisted Phase 5 route candidates, so these settings bound the search
+    # space; they never trigger route generation.
+    # A route candidate whose stored destination lies within this radius of a
+    # hospital point is considered a route *to that hospital*. The radius
+    # mirrors the routing snap tolerance because a hospital address is the same
+    # kind of reference point as a trip endpoint.
+    optimization_hospital_match_meters: float = Field(default=250.0, gt=0)
+    # Upper bound on hospitals and on route candidates per hospital, so the
+    # joint hospital x route search cannot grow without limit.
+    optimization_max_hospitals: int = Field(default=8, ge=1, le=100)
+    optimization_max_route_candidates: int = Field(default=8, ge=1, le=50)
+    # Soft objective weights. These are *costs*: every factor is normalised
+    # into [0, 1] where 1 is worst, and the lowest total wins -- the same
+    # convention Phase 5 route scoring already uses.
+    optimization_weight_eta: float = Field(default=0.30, ge=0, le=1)
+    optimization_weight_route_risk: float = Field(default=0.20, ge=0, le=1)
+    optimization_weight_capability: float = Field(default=0.20, ge=0, le=1)
+    optimization_weight_capacity: float = Field(default=0.10, ge=0, le=1)
+    optimization_weight_reliability: float = Field(default=0.10, ge=0, le=1)
+    optimization_weight_resource_proximity: float = Field(default=0.10, ge=0, le=1)
+    # AI intelligence layer. Disabled by default: with no imported road network
+    # and no trained artifact the layer has nothing to add, and every prediction
+    # resolves to the deterministic predictors instead.
+    sentinel_ai_enabled: bool = False
+    # Absolute path to the directory holding the trained artifact
+    # (sentinel_models.pkl). A relative path is refused at load time, because an
+    # artifact resolved against the working directory would change meaning with
+    # the process launch directory. Unset or absent means deterministic
+    # baseline_fallback, which is the state of this repository.
+    ai_model_path: str | None = None
+    # Reported alongside AI predictions so a stored record can be traced to the
+    # artifact version that produced it.
+    ai_model_version: str = "none"
     sumo_binary: str = "sumo"
     sumo_config_path: str | None = None
     sumo_network_id: str | None = None
@@ -54,6 +121,17 @@ class Settings(BaseSettings):
             )
         ) <= 0:
             raise ValueError("at least one route scoring weight must be positive")
+        if sum(
+            (
+                self.optimization_weight_eta,
+                self.optimization_weight_route_risk,
+                self.optimization_weight_capability,
+                self.optimization_weight_capacity,
+                self.optimization_weight_reliability,
+                self.optimization_weight_resource_proximity,
+            )
+        ) <= 0:
+            raise ValueError("at least one mission optimization weight must be positive")
         return self
 
     model_config = SettingsConfigDict(

@@ -218,6 +218,75 @@ candidate risks are restored to the old non-null contract using conservative
 PostgreSQL enum labels cannot be removed directly, so the Task 5 labels remain
 unused after downgrade.
 
+## Road Network Reference Data
+
+Migration `0005_road_network` adds two reference-data tables that hold a real
+street network: `road_networks` (one row per imported network, keyed by a stable
+`network_key`) and `road_edges` (one row per drivable edge). They are shared,
+mission-independent reference data, so they carry no mission foreign key and are
+never cascaded from operational state. Geometry is PostGIS `LINESTRING` in
+SRID 4326 with a GiST index.
+
+Identity is layered. `RoadEdge.id` is the canonical SENTINEL UUID,
+`RoadEdge.external_id` is the SUMO edge identifier and is unique only within a
+network (`netconvert` renumbers the fragments it creates at junctions), and
+`RoadEdge.osm_way_id` is provenance only — one OSM way can become dozens of
+edges.
+
+`0005` creates **empty tables only**. OSM data is never inserted by a migration.
+After `alembic upgrade head`, an operator imports a SUMO network explicitly:
+
+```sh
+cd backend
+python scripts/import_road_network.py \
+  --net simulation/networks/osm_urban_v1/osm.net.xml \
+  --network-key osm_urban_v1
+```
+
+The importer reads the network's own `projParameter`, `netOffset` and
+`origBoundary` instead of assuming a projection, and converts edge shapes
+forward from projected metres to WGS84. It imports only drivable edges:
+internal junction edges (identifiers beginning `:`) are simulator bookkeeping,
+and `railway`, `footway`, `cycleway`, `steps` and `pedestrian` classes are
+excluded so a rail line beside a signalised junction is never treated as a
+signalised approach. Re-running is safe: existing edges for the key are deleted
+and rewritten in the same transaction. `--verify` reports stored counts without
+writing. Import is never triggered by application startup;
+`ROAD_NETWORK_IMPORT_ENABLED` records that intent and defaults to `false`.
+
+The reference network is `osm_urban_v1`, a Bengaluru OSM extract staged at
+`simulation/networks/osm_urban_v1/osm.net.xml`. That file is derived data and is
+git-ignored; see
+[`simulation/scenarios/osm_urban/`](simulation/scenarios/osm_urban/) for the
+netconvert invocation and scenario metadata. Importing it yields 712 drivable
+edges from 208 distinct OSM ways.
+
+`sentinel_ai` consumes the same graph. `app/services/road_graph.py` builds a
+`networkx.DiGraph` whose nodes carry `x`/`y` in WGS84 and whose edges carry the
+five attributes the AI feature extractor requires — `length_m`,
+`speed_limit_kmh`, `road_class`, `lanes`, `has_signal` — plus `road_edge_id`
+and `external_id`. Node positions come from PostGIS; the synthetic 200 m grid is
+confined to the synthetic world builder and is never substituted for a real
+graph, so a missing coordinate raises instead of silently inventing one. The
+backend constructs the graph and passes it in; `sentinel_ai` has no dependency
+on FastAPI.
+
+The network is exposed read-only:
+
+- `GET /api/v1/road-networks/{network_key}` returns the network summary
+- `GET /api/v1/road-networks/{network_key}/edges` returns a GeoJSON
+  `FeatureCollection` of `LineString` features with `road_edge_id`,
+  `external_id`, `road_class`, `speed_limit_kmh`, `lanes` and `has_signal`
+
+`ROAD_NETWORK_KEY` selects which imported network routing and resilience use. An
+absent network leaves existing development behaviour untouched.
+
+Known data anomalies, documented rather than silently smoothed: eleven node
+pairs carry parallel edges that `networkx.DiGraph` collapses to one, so the
+graph has 701 edges against 712 imported rows; and `road_class` stores the OSM
+class string (`highway.primary`, …), so the AI's arterial share is `0.0` and
+every class currently takes the default capacity branch.
+
 ## SUMO Digital Twin And CLEARPATH
 
 Task 6 simulation is explicitly **digital-twin-only**. CLEARPATH signal actions
@@ -381,10 +450,272 @@ rather than passing with no signals.
 ## Scope
 
 The backend currently covers domain persistence, event/telemetry streams,
-deterministic prediction baselines, prototype route resilience, and simulation-
-only SUMO/CLEARPATH integration. Trained ML models, real-world traffic signal
-control, resource allocation, human approval, autonomous actions, and workflow
-orchestration remain out of scope.
+deterministic prediction baselines, prototype route resilience, imported road
+network reference data with a NetworkX graph bridge, and simulation-only
+SUMO/CLEARPATH integration. AI route prediction, trained ML models, real-world
+traffic signal control, resource allocation, human approval, autonomous
+actions, and workflow orchestration remain out of scope.
 
 > SENTINEL CLEARPATH currently operates only inside the SUMO digital traffic
 > twin. It does not directly control real-world traffic infrastructure.
+## Mission Plan CLEARPATH Validation (Phase 7)
+
+Phase 7 connects the Phase 5 route and the Phase 6 optimized mission plan to the
+existing CLEARPATH digital twin as a **measurement layer**. It is a bridge, not a
+second routing system: no route is generated, no plan is modified, and no
+traffic signal outside SUMO is ever touched.
+
+```text
+MISSION -> ROUTE CANDIDATES -> MISSION PLAN -> BASELINE SIM
+                                         -> CLEARPATH SIM -> COMPARISON (evidence)
+```
+
+### Endpoint
+
+`POST /api/v1/missions/{mission_id}/plans/{plan_id}/simulate` returns
+`SimulationEvidenceRead` with `201 Created`. The existing mission-scoped
+simulation endpoints (`/simulations/baseline`, `/simulations/clearpath`,
+`/simulations/compare`) are unchanged; this endpoint composes them rather than
+replacing them.
+
+### MissionPlan -> SimulationRequest mapping
+
+`MissionPlanSimulationService.validate_plan` reads the plan's selected route and
+constructs both simulation requests from it. The plan payload's
+`route.canonical_road_edge_ids` is the source of truth for the edge sequence;
+nothing is regenerated and no geometry is converted into topology. The caller's
+request supplies only simulation conditions (seed, horizon, vehicle config) plus
+the SUMO network identity — never the route.
+
+Validation is **fail-closed**, in this order: mission exists, plan belongs to
+that mission, mission owns the vehicle, the route belongs to that mission and
+vehicle, the route is viable, the canonical edge list is non-empty, every
+canonical `RoadEdge.id` resolves inside the selected network, and the corridor
+is compatible. Any failure is an explicit code (`PLAN_MISSION_MISMATCH`,
+`MISSING_SUMO_EDGE_MAPPING`, `INVALID_ROUTE`, `NO_ELIGIBLE_CORRIDOR`, ...), never
+a fabricated route.
+
+### RoadEdge -> SUMO mapping
+
+`RoadEdge.id` is canonical SENTINEL identity and is what plans and routes
+persist. `RoadEdge.external_id` is the SUMO/simulation edge id and is used
+**only** at the simulation boundary. `translate_route_to_sumo_edges` maps the
+canonical sequence to SUMO ids and preserves input order exactly — reversing the
+sequence would simulate a different journey than the one that was planned. It
+raises on the first unmapped edge instead of dropping it, because a silently
+shortened list would produce a *measured* result for a route the optimizer never
+chose. SUMO ids never leak into canonical route persistence.
+
+### Corridor derivation
+
+The CLEARPATH corridor is derived from the selected route, never configured. A
+signal is eligible only if its `signal_metadata.edge_id` is one of the SUMO edges
+the selected route actually traverses. A signal that is enabled and
+CLEARPATH-capable but sits off the corridor can never be proposed, and the
+`ClearPathSafetyGuard` rejects it again at execution time. When no eligible
+corridor signal exists, both simulations still run and the evidence reports
+`NO_ELIGIBLE_CORRIDOR` — the system does not invent an intervention.
+
+### Safety behaviour
+
+`ClearPathSafetyGuard` is reused unchanged; no second safety implementation was
+added, and the optimizer cannot bypass it. Every proposed action is validated
+for CLEARPATH mode, signal identity, corridor membership, configured phase,
+allowed transition, bounded duration, and simulation-only scope. Unsafe actions
+fail closed and are recorded as rejected.
+
+Everything CLEARPATH does here is a **simulation action inside SUMO/TraCI**.
+This backend contains no client for any real traffic-signal API and exposes no
+endpoint that authorises physical signal control.
+
+### Simulation evidence
+
+`SimulationEvidenceRead` (in `app/schemas/simulation_evidence.py`) carries the
+pair id, mission/plan/route identity, both `SimulationRun` ids, per-mode metrics,
+the comparison, the corridor with its status, actions requested/approved/
+executed, the safety status, the simulation status, the seed, network identity,
+SUMO version, and timestamps. Persistence reuses the existing `SimulationRun`
+JSONB fields and the existing event service — **no migration was required**
+(`alembic check` reports no pending changes).
+
+Comparison metrics are measured, never assumed: travel time, stopped time, stop
+count, average speed, and route completion, with absolute delta and percentage
+improvement where it is mathematically defined. When the baseline is zero or a
+metric is missing, the improvement is `null` rather than a number.
+
+Optimizer score and simulation improvement are **different quantities** and are
+never mixed: the plan's `score` is a routing/selection objective, while the
+comparison is a physical measurement of one simulated run.
+
+### Running the tests
+
+Fast, no SUMO required:
+
+```sh
+pytest tests/test_plan_simulation_bridge.py tests/integration/test_plan_clearpath_validation.py
+```
+
+Real SUMO against the committed demo network (auto-skips if SUMO or TraCI is
+absent):
+
+```sh
+$env:SUMO_BINARY = "sumo"
+$env:SUMO_CONFIG_PATH = "$PWD/simulation/scenarios/clearpath_demo/demo.sumocfg"
+pytest tests/integration/test_plan_clearpath_sumo.py
+```
+
+### Phase 7 known limitations
+
+1. The demo network is a synthetic Cartesian SUMO network (`projParameter="!"`),
+   which is why the Phase 3 importer correctly refuses it. The real-SUMO test
+   therefore inserts **development-fixture** `RoadNetwork`/`RoadEdge` rows with
+   clearly-labelled placeholder geometry derived from the demo's own
+   coordinates. The bridge identity, routing path and measurements are real; those
+   stored coordinates are not real geography and are never read by the
+   simulation path.
+2. Simulation never mutates the plan. A poor simulation result is returned as
+   evidence; replanning is a Phase 8 concern.
+3. `close_edge`/`add_hazard`/`increase_demand` counterfactuals stay deferred —
+   answering them would require re-running Phase 5 routing.
+4. Hospital rows remain `OPT6-DEVFIX` development fixtures, not real hospitals.
+5. CLEARPATH remains simulation-only. Real-world signal actuation is not
+   implemented and is not planned for this prototype.
+6. Phase 7 performs no ML training; simulation is evidence, not intelligence.
+
+## Human Approval And Mission Replanning (Phase 8)
+
+Phase 8 is the governance boundary. Nothing the optimizer or the simulator
+produces becomes an action on its own:
+
+```text
+AI proposes -> optimizer selects -> CLEARPATH measures
+   -> safety validation -> HUMAN REVIEW -> approve / modify / reject
+   -> server-side authorization gate -> PROTOTYPE execution
+   -> observation -> replan if required -> HUMAN APPROVAL AGAIN
+```
+
+There is **no implicit approval**. No code path marks a plan `APPROVED` without a
+`plan_approvals` row carrying a named reviewer and a decision.
+
+### State machine
+
+```text
+PLAN (DRAFT)
+  ↓
+READY_FOR_REVIEW ──┬── APPROVED ──→ EXECUTION_AUTHORIZED ──→ EXECUTING
+                   ├── MODIFIED ──→ new version ──→ READY_FOR_REVIEW
+                   └── REJECTED ──→ (terminal; never executable)
+       ↑                                    │
+       └────────── REPLAN_REQUIRED ← observation
+                              ↓
+                    new version → READY_FOR_REVIEW
+                    (old version frozen, approval intact)
+```
+
+`APPROVED` and `EXECUTION_AUTHORIZED` are deliberately different states.
+`APPROVED` records that a **human** said yes. `EXECUTION_AUTHORIZED` records that
+the **server re-checked** — feasibility, route, vehicle, resources, hospital and
+network freshness — and agreed. The second is never reached by the approval
+alone.
+
+There is no `COMPLETED` state: execution is prototype-only, so nothing real ever
+finishes and a "completed" plan would be a state nothing could honestly enter.
+
+`MODIFIED` and `REPLAN_REQUIRED` always produce a **new version**. No version is
+ever edited in place, which is what makes the approval invariant hold.
+
+### Approval binds to one exact version
+
+An approval is `(plan_id, plan_version)`. It never authorizes a later version.
+`uq_plan_approvals_plan_version` is a database constraint, so two contradictory
+decisions on one revision cannot be persisted — a race between two reviewers is
+resolved by PostgreSQL, not by application code.
+
+Decisions are idempotent: approving an already-approved version returns the
+existing record, while approving a rejected version is a `CONFLICTING_DECISION`.
+
+### Review package
+
+`GET /api/v1/missions/{mission_id}/plans/{plan_id}/review` assembles everything a
+reviewer needs *before* deciding: mission and incident context, the selected
+route and its alternatives, hospital and resources, score, feasibility, route
+diversity, Phase 7 CLEARPATH evidence, the network checksum, warnings, and known
+limitations.
+
+The optimizer score and the CLEARPATH measurement are reported **separately and
+never combined** — the score ranks selection options, the measurement is what one
+simulated run observed. Averaging them would produce a number meaning neither.
+
+### Safety authorization gate
+
+`AuthorizationGate.evaluate` is the single server-side definition of "may this
+plan execute". `GET .../authorization` returns its verdict and every reason;
+`POST .../execute` is its only mutating consumer. It verifies: an approval
+exists, it binds to this exact version, the decision is APPROVED, the plan is
+not superseded or rejected, the plan is feasible, the route and vehicle exist
+and are viable, resources and hospital still exist, and the road network has not
+been re-imported.
+
+### Stale-network protection
+
+`mission_plans.network_checksum` records the graph a plan was decided against.
+If the network is re-imported, approval and execution both fail with
+`STALE_NETWORK` rather than authorizing a route through a world that no longer
+exists. A plan with no recorded checksum is treated as unverifiable and refused —
+unknown is not the same as matching.
+
+### Execution boundary
+
+`POST .../execute` means *"authorize for prototype execution"*. The response
+carries `execution_mode=PROTOTYPE` and an explicit notice. **No real actuator
+exists**: there is no ambulance-dispatch, police, hospital, traffic-signal or
+fleet-control client anywhere in the codebase, and a test asserts that by
+walking the AST for HTTP clients.
+
+### Reviewer identity
+
+This prototype has no authentication system. Rather than invent one, reviewer
+identity is an explicit string recorded verbatim and stored alongside
+`reviewer_identity_kind = "development_prototype_identity"`, so no reader can
+mistake it for an authenticated principal.
+
+### Observation and replanning
+
+`POST .../observe` reads the existing `VehicleTelemetry` rows and compares them
+against what the plan expected. Absence of telemetry is reported as its own
+outcome — it is not evidence of health, and not evidence of deviation. A vehicle
+that has gone `OFFLINE` is a deviation regardless of whether any sample exists.
+
+`POST .../replan` marks the current version `REPLAN_REQUIRED` and runs the
+**existing** Phase 5 routing provider and Phase 6 optimizer. The superseded
+version is preserved exactly as it was, including its approval. The new plan
+lands in `READY_FOR_REVIEW` and nothing can approve, authorize or execute it —
+`ReplanResult.auto_approved` is hard-wired to `False` and recorded as such.
+
+### Events
+
+Reused `EventService`/`EventPublisher`; no second event bus. New types:
+`PLAN_READY_FOR_REVIEW`, `PLAN_MODIFIED`, `PLAN_SUPERSEDED`,
+`EXECUTION_AUTHORIZED`, `MISSION_EXECUTION_STARTED`,
+`MISSION_EXECUTION_COMPLETED`, `PLAN_REQUIRES_REAPPROVAL`. The existing
+`PLAN_APPROVED`, `PLAN_REJECTED` and `REPLAN_TRIGGERED` carry the decision and
+replan lifecycles, each with `mission_id`, `correlation_id`, `plan_id`/`version`
+and relevant metadata.
+
+Persistence is authoritative: a Redis or WebSocket failure never rewrites a
+recorded decision. Publication is best-effort and logged.
+
+### Known limitations
+
+1. Reviewer identity is an unauthenticated development string.
+2. There is no role-based policy — anyone who can call the endpoint can decide.
+   The gate checks *whether* a decision exists, not *who* is entitled to make it.
+3. `ObservationService` compares vehicle/route state and stop counts. It has no
+   calibrated model of expected travel time, so ETA degradation is not detected
+   from telemetry alone.
+4. Replanning reuses Phase 5/6 as-is; it does not yet use the Phase 7 evidence to
+   decide whether a replan is warranted.
+5. Execution is a recorded state. There is no completion transition, because
+   there is nothing real to complete.
+6. Hospital records remain `P8R-DEVFIX`/`OPT6-DEVFIX` development fixtures.
+7. CLEARPATH remains simulation-only; no real traffic-signal actuation exists.

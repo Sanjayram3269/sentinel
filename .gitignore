@@ -1,0 +1,84 @@
+# Repository-root ignore rules for SENTINEL.
+#
+# backend/.gitignore remains in force for the backend tree and is not
+# superseded by this file. These rules are additive and exist to keep
+# generated and machine-local artifacts out of the repository when work is
+# imported from several branches at once.
+#
+# In particular, commit 9d1c7dc on abhy_ai ("handoff-final") added a committed
+# virtualenv at .venv_312/ containing 7,483 files, including macOS binaries
+# built for the author's machine. Nothing of that kind may enter this
+# repository again.
+
+# --- Virtual environments ---
+# Any interpreter environment, at the root or nested in a subproject.
+.venv*/
+**/.venv/
+venv/
+**/venv/
+.env
+**/.env
+
+# --- Node / frontend build output ---
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.vite/
+**/.vite/
+
+# --- Trained model artifacts ---
+# Models are rebuilt from source with `make train`; the binary artifact must
+# never be committed. models/metrics.json stays tracked because it is the
+# reviewable record of a training run.
+*.pkl
+*.pickle
+*.joblib
+*.onnx
+*.ubj
+
+# --- Python caches and coverage ---
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+**/.pytest_cache/
+.coverage
+**/.coverage
+htmlcov/
+**/htmlcov/
+
+# --- Generated SUMO output ---
+# Scenario inputs (sumocfg, net, nod, edg, rou, signals.json) are committed on
+# purpose. Everything SUMO writes while running is not.
+simulation/output/
+**/simulation/output/
+simulation/runs/
+**/simulation/runs/
+# Regenerated SUMO networks are derived data. Scenario metadata (sumocfg,
+# signals.json) is committed next to them under simulation/scenarios/, but the
+# .net.xml itself is rebuilt from OSM by scripts/import_road_network.py and the
+# documented netconvert invocation, never committed.
+simulation/networks/
+**/simulation/networks/
+*.net.xml
+# SUMO writes tripinfos.xml, stats.xml and edgeData.xml with no infix, so the
+# dotted forms alone do not match the files that were actually committed on
+# simulation-lavanya. Both spellings are listed on purpose.
+*.tripinfo.xml
+tripinfos.xml
+*.stats.xml
+stats.xml
+*.edgeData.xml
+edgeData.xml
+*.fcd.xml
+*.emission.xml
+*.netstate.xml
+*.summary.xml
+*.queue.xml
+*.rou.xml.alt.xml
+
+# --- Local tooling ---
+.DS_Store
+Thumbs.db
+*.log

@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import router as api_v1_router
 from app.config import get_settings
@@ -39,6 +40,17 @@ app = FastAPI(
 )
 app.include_router(api_v1_router)
 app.include_router(websocket_router)
+
+# Browser access is restricted to the configured origin allowlist. The
+# middleware is added after the routers so it also wraps mounted sub-apps
+# in the future; route and schema registration above is unchanged.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "Accept"],
+)
 
 
 @app.get("/", tags=["system"])

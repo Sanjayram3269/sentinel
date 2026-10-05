@@ -26,6 +26,8 @@ def test_domain_models_import_and_relationships_configure() -> None:
         "audit_logs",
         "simulation_runs",
         "predictions",
+        "road_networks",
+        "road_edges",
     }
     assert set(Base.metadata.tables) == expected_tables
 
@@ -54,6 +56,10 @@ def test_spatial_columns_use_expected_geometry_and_srid() -> None:
     hazard_type = Base.metadata.tables["hazards"].c.geometry.type
     assert hazard_type.geometry_type == "MULTIPOLYGON"
     assert hazard_type.srid == 4326
+
+    road_edge_type = Base.metadata.tables["road_edges"].c.geometry.type
+    assert road_edge_type.geometry_type == "LINESTRING"
+    assert road_edge_type.srid == 4326
 
 
 def test_domain_timestamps_are_timezone_aware() -> None:
