@@ -581,3 +581,141 @@ pytest tests/integration/test_plan_clearpath_sumo.py
 5. CLEARPATH remains simulation-only. Real-world signal actuation is not
    implemented and is not planned for this prototype.
 6. Phase 7 performs no ML training; simulation is evidence, not intelligence.
+
+## Human Approval And Mission Replanning (Phase 8)
+
+Phase 8 is the governance boundary. Nothing the optimizer or the simulator
+produces becomes an action on its own:
+
+```text
+AI proposes -> optimizer selects -> CLEARPATH measures
+   -> safety validation -> HUMAN REVIEW -> approve / modify / reject
+   -> server-side authorization gate -> PROTOTYPE execution
+   -> observation -> replan if required -> HUMAN APPROVAL AGAIN
+```
+
+There is **no implicit approval**. No code path marks a plan `APPROVED` without a
+`plan_approvals` row carrying a named reviewer and a decision.
+
+### State machine
+
+```text
+PLAN (DRAFT)
+  ↓
+READY_FOR_REVIEW ──┬── APPROVED ──→ EXECUTION_AUTHORIZED ──→ EXECUTING
+                   ├── MODIFIED ──→ new version ──→ READY_FOR_REVIEW
+                   └── REJECTED ──→ (terminal; never executable)
+       ↑                                    │
+       └────────── REPLAN_REQUIRED ← observation
+                              ↓
+                    new version → READY_FOR_REVIEW
+                    (old version frozen, approval intact)
+```
+
+`APPROVED` and `EXECUTION_AUTHORIZED` are deliberately different states.
+`APPROVED` records that a **human** said yes. `EXECUTION_AUTHORIZED` records that
+the **server re-checked** — feasibility, route, vehicle, resources, hospital and
+network freshness — and agreed. The second is never reached by the approval
+alone.
+
+There is no `COMPLETED` state: execution is prototype-only, so nothing real ever
+finishes and a "completed" plan would be a state nothing could honestly enter.
+
+`MODIFIED` and `REPLAN_REQUIRED` always produce a **new version**. No version is
+ever edited in place, which is what makes the approval invariant hold.
+
+### Approval binds to one exact version
+
+An approval is `(plan_id, plan_version)`. It never authorizes a later version.
+`uq_plan_approvals_plan_version` is a database constraint, so two contradictory
+decisions on one revision cannot be persisted — a race between two reviewers is
+resolved by PostgreSQL, not by application code.
+
+Decisions are idempotent: approving an already-approved version returns the
+existing record, while approving a rejected version is a `CONFLICTING_DECISION`.
+
+### Review package
+
+`GET /api/v1/missions/{mission_id}/plans/{plan_id}/review` assembles everything a
+reviewer needs *before* deciding: mission and incident context, the selected
+route and its alternatives, hospital and resources, score, feasibility, route
+diversity, Phase 7 CLEARPATH evidence, the network checksum, warnings, and known
+limitations.
+
+The optimizer score and the CLEARPATH measurement are reported **separately and
+never combined** — the score ranks selection options, the measurement is what one
+simulated run observed. Averaging them would produce a number meaning neither.
+
+### Safety authorization gate
+
+`AuthorizationGate.evaluate` is the single server-side definition of "may this
+plan execute". `GET .../authorization` returns its verdict and every reason;
+`POST .../execute` is its only mutating consumer. It verifies: an approval
+exists, it binds to this exact version, the decision is APPROVED, the plan is
+not superseded or rejected, the plan is feasible, the route and vehicle exist
+and are viable, resources and hospital still exist, and the road network has not
+been re-imported.
+
+### Stale-network protection
+
+`mission_plans.network_checksum` records the graph a plan was decided against.
+If the network is re-imported, approval and execution both fail with
+`STALE_NETWORK` rather than authorizing a route through a world that no longer
+exists. A plan with no recorded checksum is treated as unverifiable and refused —
+unknown is not the same as matching.
+
+### Execution boundary
+
+`POST .../execute` means *"authorize for prototype execution"*. The response
+carries `execution_mode=PROTOTYPE` and an explicit notice. **No real actuator
+exists**: there is no ambulance-dispatch, police, hospital, traffic-signal or
+fleet-control client anywhere in the codebase, and a test asserts that by
+walking the AST for HTTP clients.
+
+### Reviewer identity
+
+This prototype has no authentication system. Rather than invent one, reviewer
+identity is an explicit string recorded verbatim and stored alongside
+`reviewer_identity_kind = "development_prototype_identity"`, so no reader can
+mistake it for an authenticated principal.
+
+### Observation and replanning
+
+`POST .../observe` reads the existing `VehicleTelemetry` rows and compares them
+against what the plan expected. Absence of telemetry is reported as its own
+outcome — it is not evidence of health, and not evidence of deviation. A vehicle
+that has gone `OFFLINE` is a deviation regardless of whether any sample exists.
+
+`POST .../replan` marks the current version `REPLAN_REQUIRED` and runs the
+**existing** Phase 5 routing provider and Phase 6 optimizer. The superseded
+version is preserved exactly as it was, including its approval. The new plan
+lands in `READY_FOR_REVIEW` and nothing can approve, authorize or execute it —
+`ReplanResult.auto_approved` is hard-wired to `False` and recorded as such.
+
+### Events
+
+Reused `EventService`/`EventPublisher`; no second event bus. New types:
+`PLAN_READY_FOR_REVIEW`, `PLAN_MODIFIED`, `PLAN_SUPERSEDED`,
+`EXECUTION_AUTHORIZED`, `MISSION_EXECUTION_STARTED`,
+`MISSION_EXECUTION_COMPLETED`, `PLAN_REQUIRES_REAPPROVAL`. The existing
+`PLAN_APPROVED`, `PLAN_REJECTED` and `REPLAN_TRIGGERED` carry the decision and
+replan lifecycles, each with `mission_id`, `correlation_id`, `plan_id`/`version`
+and relevant metadata.
+
+Persistence is authoritative: a Redis or WebSocket failure never rewrites a
+recorded decision. Publication is best-effort and logged.
+
+### Known limitations
+
+1. Reviewer identity is an unauthenticated development string.
+2. There is no role-based policy — anyone who can call the endpoint can decide.
+   The gate checks *whether* a decision exists, not *who* is entitled to make it.
+3. `ObservationService` compares vehicle/route state and stop counts. It has no
+   calibrated model of expected travel time, so ETA degradation is not detected
+   from telemetry alone.
+4. Replanning reuses Phase 5/6 as-is; it does not yet use the Phase 7 evidence to
+   decide whether a replan is warranted.
+5. Execution is a recorded state. There is no completion transition, because
+   there is nothing real to complete.
+6. Hospital records remain `P8R-DEVFIX`/`OPT6-DEVFIX` development fixtures.
+7. CLEARPATH remains simulation-only; no real traffic-signal actuation exists.

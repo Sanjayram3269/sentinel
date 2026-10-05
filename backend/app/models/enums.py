@@ -102,6 +102,18 @@ class PlanStatus(str, Enum):
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
     SUPERSEDED = "SUPERSEDED"
+    # Phase 8 human-in-the-loop states. The optimizer produces DRAFT; a
+    # computed plan is offered for review as READY_FOR_REVIEW; a human decision
+    # moves it to APPROVED or REJECTED; EXECUTION_AUTHORIZED is granted by the
+    # server-side gate rather than by the approval itself, which is the
+    # distinction that stops a simulation result from becoming an action.
+    READY_FOR_REVIEW = "READY_FOR_REVIEW"
+    EXECUTION_AUTHORIZED = "EXECUTION_AUTHORIZED"
+    EXECUTING = "EXECUTING"
+    REPLAN_REQUIRED = "REPLAN_REQUIRED"
+    # Deliberately no COMPLETED state. Execution is prototype-only: there is
+    # no real mission that finishes, so a "completed" plan would be a state
+    # nothing could ever honestly enter.
 
 
 class SimulationStatus(str, Enum):

@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from app.api.v1.incidents import router as incidents_router
 from app.api.v1.events import router as events_router
 from app.api.v1.missions import router as missions_router
+from app.api.v1.approvals import router as approvals_router
 from app.api.v1.plans import router as plans_router
 from app.api.v1.predictions import router as predictions_router
 from app.api.v1.road_networks import router as road_networks_router
@@ -24,3 +25,6 @@ router.include_router(routes_router)
 router.include_router(simulations_router)
 router.include_router(road_networks_router)
 router.include_router(plans_router)
+# Phase 8 governance routes. Mounted on the same prefix so a plan's review,
+# decision and execution are discoverable under one resource.
+router.include_router(approvals_router)
