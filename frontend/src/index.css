@@ -1,0 +1,261 @@
+@import 'tailwindcss';
+
+@theme {
+  /* Command-center palette. Graphite base, restrained emergency accents,
+     cool intelligence accents. Deliberately not neon. */
+  --color-void: #07090c;
+  --color-graphite-950: #0a0d12;
+  --color-graphite-900: #0e1218;
+  --color-graphite-850: #12171f;
+  --color-graphite-800: #161c26;
+  --color-graphite-700: #1e2733;
+  --color-graphite-600: #2a3542;
+  --color-graphite-500: #3b4855;
+
+  --color-ink-400: #7d8b9c;
+  --color-ink-300: #9daab8;
+  --color-ink-200: #c3ccd6;
+  --color-ink-100: #e6ebf0;
+
+  --color-emergency-600: #c2410c;
+  --color-emergency-500: #ea580c;
+  --color-emergency-400: #f97316;
+  --color-emergency-300: #fb923c;
+
+  --color-alert-600: #b91c1c;
+  --color-alert-500: #dc2626;
+  --color-alert-400: #ef4444;
+
+  --color-intel-600: #0e7490;
+  --color-intel-500: #0891b2;
+  --color-intel-400: #22d3ee;
+  --color-intel-300: #67e8f9;
+
+  --color-go-500: #16a34a;
+  --color-go-400: #22c55e;
+
+  --color-warn-500: #ca8a04;
+  --color-warn-400: #eab308;
+
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+}
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    border-color: var(--color-graphite-700);
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-void);
+    color: var(--color-ink-200);
+    font-family:
+      ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    font-feature-settings: 'tnum' 1, 'cv02' 1;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Operational type: small, dense, uppercase for labels. */
+  h1,
+  h2,
+  h3,
+  h4 {
+    margin: 0;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--color-ink-100);
+  }
+
+  /* Visible, consistent keyboard focus everywhere. */
+  :focus-visible {
+    outline: 2px solid var(--color-intel-400);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+
+  ::selection {
+    background: var(--color-intel-500);
+    color: var(--color-void);
+  }
+}
+
+@layer components {
+  /* Thin-bordered layered panel: the core surface of the whole UI. */
+  .panel {
+    background-color: color-mix(in srgb, var(--color-graphite-900) 88%, transparent);
+    border: 1px solid var(--color-graphite-700);
+    border-radius: 6px;
+    backdrop-filter: blur(8px);
+    transition:
+      border-color 160ms ease,
+      background-color 160ms ease;
+  }
+
+  .panel-interactive:hover {
+    border-color: var(--color-graphite-600);
+    background-color: color-mix(in srgb, var(--color-graphite-850) 92%, transparent);
+  }
+
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--color-graphite-700);
+  }
+
+  .panel-title {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--color-ink-400);
+  }
+
+  .stat-value {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--color-ink-100);
+    line-height: 1.1;
+  }
+
+  .label-caps {
+    font-size: 0.625rem;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--color-ink-400);
+  }
+
+  /* Live markers breathe; nothing else in the UI animates idly. */
+  .pulse-live {
+    animation: sentinel-pulse 2.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  .grid-scan {
+    background-image:
+      linear-gradient(rgba(34, 211, 238, 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(34, 211, 238, 0.035) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+}
+
+@keyframes sentinel-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(1.35);
+  }
+}
+
+@keyframes sentinel-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+.sweep::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(34, 211, 238, 0.08),
+    transparent
+  );
+  animation: sentinel-sweep 2.8s ease-in-out infinite;
+}
+
+/* Respect reduced-motion: live indicators still convey state via colour. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .pulse-live {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+/* MapLibre chrome, restyled to match the command interface. */
+.maplibregl-ctrl-group {
+  background: var(--color-graphite-850) !important;
+  border: 1px solid var(--color-graphite-700) !important;
+  border-radius: 5px !important;
+  box-shadow: none !important;
+}
+
+.maplibregl-ctrl-group button {
+  background: transparent !important;
+  filter: invert(0.85) hue-rotate(180deg);
+}
+
+.maplibregl-ctrl-attrib {
+  background: color-mix(in srgb, var(--color-graphite-900) 80%, transparent) !important;
+  color: var(--color-ink-400) !important;
+  font-size: 10px !important;
+}
+
+.maplibregl-ctrl-attrib a {
+  color: var(--color-ink-400) !important;
+}
+
+.maplibregl-popup-content {
+  background: var(--color-graphite-850) !important;
+  border: 1px solid var(--color-graphite-600) !important;
+  border-radius: 5px !important;
+  color: var(--color-ink-200) !important;
+  font-family: var(--font-mono);
+  font-size: 11px !important;
+  padding: 8px 10px !important;
+}
+
+.maplibregl-popup-tip {
+  border-top-color: var(--color-graphite-850) !important;
+  border-bottom-color: var(--color-graphite-850) !important;
+}
+
+/* Scrollbars, so dense panels do not sprout bright OS chrome. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-graphite-600) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--color-graphite-600);
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-graphite-500);
+}
