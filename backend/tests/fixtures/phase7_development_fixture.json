@@ -1,0 +1,34 @@
+{
+  "_comment": [
+    "Phase 7 development fixture for mission-plan CLEARPATH validation.",
+    "Separate from simulation/scenarios/development_fixture.json on purpose:",
+    "the shared test database also holds traffic signals claimed by other",
+    "simulation suites, and two signals may not claim one SUMO signal id.",
+    "This file gives Phase 7 its own network, edge ids and signal so corridor",
+    "derivation is exercised without colliding with another suite's fixtures.",
+    "It is SYNTHETIC test data and measures nothing about real traffic."
+  ],
+  "label": "phase7-development-fixture",
+  "model": "synthetic fixture replay; identical baseline and CLEARPATH trace",
+  "network_id": "phase7-development-test-network",
+  "departure_step": 0,
+  "edge_ids": ["p7-edge-0", "p7-edge-1"],
+  "signals": [
+    {
+      "signal_id": "p7-tls-1",
+      "edge_id": "p7-edge-1",
+      "valid_phases": ["R", "G", "Y"],
+      "initial_phase": "R",
+      "preemption_phase": "G",
+      "release_phase": "R",
+      "safe_transitions": {"R": ["G"], "G": ["R"], "Y": ["R"]},
+      "maximum_duration_seconds": 2
+    }
+  ],
+  "steps": [
+    {"edge_id": "p7-edge-0", "speed_meters_per_second": 5.0, "arrived": false, "distances_to_signals_meters": {"p7-tls-1": 120.0}},
+    {"edge_id": "p7-edge-0", "speed_meters_per_second": 0.0, "arrived": false, "distances_to_signals_meters": {"p7-tls-1": 10.0}},
+    {"edge_id": "p7-edge-1", "speed_meters_per_second": 4.0, "arrived": false, "distances_to_signals_meters": {"p7-tls-1": -1.0}},
+    {"edge_id": "p7-edge-1", "speed_meters_per_second": 0.0, "arrived": true, "distances_to_signals_meters": {"p7-tls-1": -1.0}}
+  ]
+}

@@ -458,3 +458,126 @@ actions, and workflow orchestration remain out of scope.
 
 > SENTINEL CLEARPATH currently operates only inside the SUMO digital traffic
 > twin. It does not directly control real-world traffic infrastructure.
+## Mission Plan CLEARPATH Validation (Phase 7)
+
+Phase 7 connects the Phase 5 route and the Phase 6 optimized mission plan to the
+existing CLEARPATH digital twin as a **measurement layer**. It is a bridge, not a
+second routing system: no route is generated, no plan is modified, and no
+traffic signal outside SUMO is ever touched.
+
+```text
+MISSION -> ROUTE CANDIDATES -> MISSION PLAN -> BASELINE SIM
+                                         -> CLEARPATH SIM -> COMPARISON (evidence)
+```
+
+### Endpoint
+
+`POST /api/v1/missions/{mission_id}/plans/{plan_id}/simulate` returns
+`SimulationEvidenceRead` with `201 Created`. The existing mission-scoped
+simulation endpoints (`/simulations/baseline`, `/simulations/clearpath`,
+`/simulations/compare`) are unchanged; this endpoint composes them rather than
+replacing them.
+
+### MissionPlan -> SimulationRequest mapping
+
+`MissionPlanSimulationService.validate_plan` reads the plan's selected route and
+constructs both simulation requests from it. The plan payload's
+`route.canonical_road_edge_ids` is the source of truth for the edge sequence;
+nothing is regenerated and no geometry is converted into topology. The caller's
+request supplies only simulation conditions (seed, horizon, vehicle config) plus
+the SUMO network identity — never the route.
+
+Validation is **fail-closed**, in this order: mission exists, plan belongs to
+that mission, mission owns the vehicle, the route belongs to that mission and
+vehicle, the route is viable, the canonical edge list is non-empty, every
+canonical `RoadEdge.id` resolves inside the selected network, and the corridor
+is compatible. Any failure is an explicit code (`PLAN_MISSION_MISMATCH`,
+`MISSING_SUMO_EDGE_MAPPING`, `INVALID_ROUTE`, `NO_ELIGIBLE_CORRIDOR`, ...), never
+a fabricated route.
+
+### RoadEdge -> SUMO mapping
+
+`RoadEdge.id` is canonical SENTINEL identity and is what plans and routes
+persist. `RoadEdge.external_id` is the SUMO/simulation edge id and is used
+**only** at the simulation boundary. `translate_route_to_sumo_edges` maps the
+canonical sequence to SUMO ids and preserves input order exactly — reversing the
+sequence would simulate a different journey than the one that was planned. It
+raises on the first unmapped edge instead of dropping it, because a silently
+shortened list would produce a *measured* result for a route the optimizer never
+chose. SUMO ids never leak into canonical route persistence.
+
+### Corridor derivation
+
+The CLEARPATH corridor is derived from the selected route, never configured. A
+signal is eligible only if its `signal_metadata.edge_id` is one of the SUMO edges
+the selected route actually traverses. A signal that is enabled and
+CLEARPATH-capable but sits off the corridor can never be proposed, and the
+`ClearPathSafetyGuard` rejects it again at execution time. When no eligible
+corridor signal exists, both simulations still run and the evidence reports
+`NO_ELIGIBLE_CORRIDOR` — the system does not invent an intervention.
+
+### Safety behaviour
+
+`ClearPathSafetyGuard` is reused unchanged; no second safety implementation was
+added, and the optimizer cannot bypass it. Every proposed action is validated
+for CLEARPATH mode, signal identity, corridor membership, configured phase,
+allowed transition, bounded duration, and simulation-only scope. Unsafe actions
+fail closed and are recorded as rejected.
+
+Everything CLEARPATH does here is a **simulation action inside SUMO/TraCI**.
+This backend contains no client for any real traffic-signal API and exposes no
+endpoint that authorises physical signal control.
+
+### Simulation evidence
+
+`SimulationEvidenceRead` (in `app/schemas/simulation_evidence.py`) carries the
+pair id, mission/plan/route identity, both `SimulationRun` ids, per-mode metrics,
+the comparison, the corridor with its status, actions requested/approved/
+executed, the safety status, the simulation status, the seed, network identity,
+SUMO version, and timestamps. Persistence reuses the existing `SimulationRun`
+JSONB fields and the existing event service — **no migration was required**
+(`alembic check` reports no pending changes).
+
+Comparison metrics are measured, never assumed: travel time, stopped time, stop
+count, average speed, and route completion, with absolute delta and percentage
+improvement where it is mathematically defined. When the baseline is zero or a
+metric is missing, the improvement is `null` rather than a number.
+
+Optimizer score and simulation improvement are **different quantities** and are
+never mixed: the plan's `score` is a routing/selection objective, while the
+comparison is a physical measurement of one simulated run.
+
+### Running the tests
+
+Fast, no SUMO required:
+
+```sh
+pytest tests/test_plan_simulation_bridge.py tests/integration/test_plan_clearpath_validation.py
+```
+
+Real SUMO against the committed demo network (auto-skips if SUMO or TraCI is
+absent):
+
+```sh
+$env:SUMO_BINARY = "sumo"
+$env:SUMO_CONFIG_PATH = "$PWD/simulation/scenarios/clearpath_demo/demo.sumocfg"
+pytest tests/integration/test_plan_clearpath_sumo.py
+```
+
+### Phase 7 known limitations
+
+1. The demo network is a synthetic Cartesian SUMO network (`projParameter="!"`),
+   which is why the Phase 3 importer correctly refuses it. The real-SUMO test
+   therefore inserts **development-fixture** `RoadNetwork`/`RoadEdge` rows with
+   clearly-labelled placeholder geometry derived from the demo's own
+   coordinates. The bridge identity, routing path and measurements are real; those
+   stored coordinates are not real geography and are never read by the
+   simulation path.
+2. Simulation never mutates the plan. A poor simulation result is returned as
+   evidence; replanning is a Phase 8 concern.
+3. `close_edge`/`add_hazard`/`increase_demand` counterfactuals stay deferred —
+   answering them would require re-running Phase 5 routing.
+4. Hospital rows remain `OPT6-DEVFIX` development fixtures, not real hospitals.
+5. CLEARPATH remains simulation-only. Real-world signal actuation is not
+   implemented and is not planned for this prototype.
+6. Phase 7 performs no ML training; simulation is evidence, not intelligence.

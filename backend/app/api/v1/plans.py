@@ -31,12 +31,31 @@ from app.services.optimization.mission_optimizer import (
     OptimizationRequest,
 )
 from app.services.optimization.whatif import WhatIfChange, WhatIfService
+from app.services.simulation.mission_plan import MissionPlanSimulationService
+from app.services.simulation.service import SimulationService
+from app.services.simulation.runner import AdapterFactory
+from app.schemas.simulation_evidence import PlanSimulateRequest, SimulationEvidenceRead
 
 router = APIRouter(prefix="/missions", tags=["plans"])
 
 
 def _optimizer(request: Request) -> MissionOptimizer:
     return MissionOptimizer(EventService(EventPublisher(request.app.state.redis)))
+
+
+def _plan_simulator(request: Request) -> MissionPlanSimulationService:
+    """Build the CLEARPATH validator on top of the existing simulation service.
+
+    The adapter-factory seam is honoured here exactly as the simulation API does
+    it, so a test or deployment can substitute a simulator without Phase 7
+    constructing one. This endpoint never talks to TraCI itself.
+    """
+    event_service = EventService(EventPublisher(request.app.state.redis))
+    adapter_factory: AdapterFactory | None = getattr(
+        request.app.state, "simulation_adapter_factory", None
+    )
+    simulation_service = SimulationService(event_service, adapter_factory=adapter_factory)
+    return MissionPlanSimulationService(simulation_service)
 
 
 def _payload_of(plan: MissionPlan) -> dict[str, Any]:
@@ -243,6 +262,29 @@ async def plan_what_if(
         recomputed_infeasible_reasons=result.to_payload()["recomputed_infeasible_reasons"],
         recomputed_rationale=result.recomputed.rationale,
     )
+
+
+@router.post(
+    "/{mission_id}/plans/{plan_id}/simulate",
+    response_model=SimulationEvidenceRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Validate a selected mission plan with a CLEARPATH simulation pair",
+    description=(
+        "Runs a baseline and a CLEARPATH simulation of the plan's selected "
+        "route under identical network, demand, seed and horizon, and returns "
+        "the measured comparison. The plan is never modified. CLEARPATH acts "
+        "only inside the SUMO/TraCI digital twin and never controls real-world "
+        "traffic signals."
+    ),
+)
+async def simulate_mission_plan(
+    mission_id: UUID,
+    plan_id: UUID,
+    payload: PlanSimulateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> SimulationEvidenceRead:
+    return await _plan_simulator(request).validate_plan(db, mission_id, plan_id, payload)
 
 
 async def _require_mission(db: AsyncSession, mission_id: UUID) -> None:

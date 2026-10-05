@@ -272,8 +272,11 @@ class TestRealRoadGraph:
                         text(
                             "SELECT count(*), min(ST_SRID(geometry)), "
                             "count(*) FILTER (WHERE NOT ST_IsValid(geometry)) "
-                            "FROM road_edges"
-                        )
+                            "FROM road_edges e "
+                            "JOIN road_networks n ON n.id = e.network_id "
+                            "WHERE n.network_key = :network_key"
+                        ),
+                        {"network_key": NETWORK_KEY},
                     )
                 ).one()
                 return row
