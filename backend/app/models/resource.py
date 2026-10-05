@@ -4,7 +4,7 @@ from typing import Any
 from uuid import UUID
 
 from geoalchemy2 import Geometry
-from sqlalchemy import CheckConstraint, Enum, Index, Integer, String
+from sqlalchemy import CheckConstraint, Enum, Float, Index, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -41,6 +41,11 @@ class Hospital(UUIDPrimaryKey, TimestampMixin, Base):
         default=OperationalStatus.OPERATIONAL,
         server_default=OperationalStatus.OPERATIONAL.value,
     )
+    # Observed/curated share of past missions the hospital received, in [0, 1].
+    # Nullable because no source in this repository produces it yet: NULL means
+    # "unavailable" and is reported as such instead of being defaulted to a
+    # number that would silently rank every hospital identically.
+    reliability: Mapped[float | None] = mapped_column(Float)
 
 
 class Shelter(UUIDPrimaryKey, TimestampMixin, Base):

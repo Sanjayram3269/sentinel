@@ -61,6 +61,27 @@ class Settings(BaseSettings):
     # Importing OSM data is an explicit operator action and is never
     # performed by application startup or by an Alembic migration.
     road_network_import_enabled: bool = False
+    # Mission optimization (Phase 6). The optimizer only ever *selects among*
+    # persisted Phase 5 route candidates, so these settings bound the search
+    # space; they never trigger route generation.
+    # A route candidate whose stored destination lies within this radius of a
+    # hospital point is considered a route *to that hospital*. The radius
+    # mirrors the routing snap tolerance because a hospital address is the same
+    # kind of reference point as a trip endpoint.
+    optimization_hospital_match_meters: float = Field(default=250.0, gt=0)
+    # Upper bound on hospitals and on route candidates per hospital, so the
+    # joint hospital x route search cannot grow without limit.
+    optimization_max_hospitals: int = Field(default=8, ge=1, le=100)
+    optimization_max_route_candidates: int = Field(default=8, ge=1, le=50)
+    # Soft objective weights. These are *costs*: every factor is normalised
+    # into [0, 1] where 1 is worst, and the lowest total wins -- the same
+    # convention Phase 5 route scoring already uses.
+    optimization_weight_eta: float = Field(default=0.30, ge=0, le=1)
+    optimization_weight_route_risk: float = Field(default=0.20, ge=0, le=1)
+    optimization_weight_capability: float = Field(default=0.20, ge=0, le=1)
+    optimization_weight_capacity: float = Field(default=0.10, ge=0, le=1)
+    optimization_weight_reliability: float = Field(default=0.10, ge=0, le=1)
+    optimization_weight_resource_proximity: float = Field(default=0.10, ge=0, le=1)
     # AI intelligence layer. Disabled by default: with no imported road network
     # and no trained artifact the layer has nothing to add, and every prediction
     # resolves to the deterministic predictors instead.
@@ -100,6 +121,17 @@ class Settings(BaseSettings):
             )
         ) <= 0:
             raise ValueError("at least one route scoring weight must be positive")
+        if sum(
+            (
+                self.optimization_weight_eta,
+                self.optimization_weight_route_risk,
+                self.optimization_weight_capability,
+                self.optimization_weight_capacity,
+                self.optimization_weight_reliability,
+                self.optimization_weight_resource_proximity,
+            )
+        ) <= 0:
+            raise ValueError("at least one mission optimization weight must be positive")
         return self
 
     model_config = SettingsConfigDict(

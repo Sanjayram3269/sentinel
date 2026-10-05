@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     Enum,
@@ -49,7 +50,15 @@ class MissionPlan(UUIDPrimaryKey, TimestampMixin, Base):
         JSONB, nullable=False, default=dict, server_default="{}"
     )
     score: Mapped[float | None] = mapped_column(Float)
+    # Deliberately left unset by the optimizer. The field means "how confident
+    # are we in this decision"; the optimizer has no calibrated quantity of
+    # that kind, and a hard-constraint-plus-weighted-sum result does not
+    # justify a number. Data coverage is recorded separately in the payload.
     confidence: Mapped[float | None] = mapped_column(Float)
+    # NULL distinguishes "no feasibility was recorded" from an explicit False
+    # for a plan that was computed and found to have no feasible combination.
+    feasible: Mapped[bool | None] = mapped_column(Boolean)
+    rationale: Mapped[str | None] = mapped_column(Text)
 
     mission: Mapped["Mission"] = relationship(back_populates="plans")
     approvals: Mapped[list["PlanApproval"]] = relationship(
